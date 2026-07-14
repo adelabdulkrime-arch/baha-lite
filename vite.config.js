@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
+import react from '@vitejs/react' // أو أي إضافات موجودة لديك بالفعل
 
 export default defineConfig({
-  // تأكد من أن الاسم يطابق تماماً اسم مستودعك 'baha-lite'
-  base: '/baha-lite/', 
-  // ... باقي إعداداتك هنا
+  base: '/baha-lite/', // أضف هذا السطر تماماً
+  plugins: [react()],
 })
