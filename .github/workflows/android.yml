@@ -1,0 +1,39 @@
+name: Build Android APK
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Web Assets
+        run: npm run build
+
+      - name: Initialize and Sync Capacitor
+        run: |
+          npx cap init "Baha Lite" "com.baha.lite" --web-dir=dist
+          npx cap add android
+          npx cap sync android
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Build Android APK
+        run: |
+          cd android && ./gradlew assembleDebug
+
+      - name: Upload APK Package
+        uses: actions/upload-artifact@v3
+        with:
+          name: Alameen-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
