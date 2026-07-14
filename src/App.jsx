@@ -1558,8 +1558,36 @@ export default function App() {
     showToast("تم إتمام عملية البيع ✓");
   }
 
-  /* ---------- purchase orders / production ---------- */
-  function handleSavePO() {
-    const lines = poForm.lines.filter((l) => l.itemId && Number(l.qty) > 0);
-    if (!poForm.supplierId || lines.length === 0) return showToast("يرجى إكمال بيانات أمر الشراء");
-    const newPO = { id: uid("po"), no: data.purchaseOrders.length + 1, supplierId: poForm.supplierId, date: poForm.date, lines, status: "open" 
+/* ---------- purchase orders / production ---------- */
+function handleSavePO() {
+  const lines = poForm.lines.filter((l) => l.itemId && Number(l.qty) > 0);
+  if (!poForm.supplierId || lines.length === 0) {
+    return showToast("يرجى إكمال بيانات أمر الشراء");
+  }
+  
+  const newPO = { 
+    id: uid("po"), 
+    no: data.purchaseOrders.length + 1, 
+    supplierId: poForm.supplierId, 
+    date: poForm.date, 
+    lines: lines, 
+    status: "open" 
+  };
+
+  setData(prev => ({
+    ...prev,
+    purchaseOrders: [newPO, ...prev.purchaseOrders]
+  }));
+
+  setPoForm({
+    supplierId: "",
+    date: todayStr(),
+    lines: [{ itemId: "", qty: "", cost: "" }]
+  });
+
+  showToast("Success");
+
+}
+
+export default App;
+
