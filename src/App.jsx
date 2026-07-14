@@ -1,1145 +1,1365 @@
-import { useState, useEffect, useCallback, useContext, createContext } from "react";
-import {
-  LayoutDashboard, BookOpen, FileText, Receipt, Package, TrendingUp,
-  Plus, X, ChevronDown, Trash2, AlertTriangle, Wallet, Landmark,
-  CreditCard, ArrowUpRight, ArrowDownRight, Warehouse, PieChart,
-  Contact2, Users, Building2, MapPin, ShieldCheck, Settings as SettingsIcon,
-  ShoppingCart, Factory, ClipboardList, HelpCircle, Globe, Cloud, HardDrive,
-  Download, Search,
-} from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-} from "recharts";
-import * as XLSX from "xlsx";
+import React, { useState, useEffect, createContext, useContext } from "react";
 
-/* ============================== helpers ============================== */
+/* ============================== Context & Global Helpers ============================== */
+const LangContext = createContext();
 
-function uid(prefix = "id") {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+// دالة لتوليد معرف فريد وبسيط
+function uid(prefix = "") {
+  return `${prefix}_${Math.random().toString(36).substr(2, 9)}`;
 }
+
+// دالة لجلب تاريخ اليوم بصيغة YYYY-MM-DD
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function monthKey(dateStr) {
-  return (dateStr || todayStr()).slice(0, 7);
-}
-function formatCurrency(n, lang = "ar") {
-  const num = Number(n) || 0;
-  const sign = num < 0 ? "-" : "";
-  const abs = Math.abs(num);
-  const parts = abs.toFixed(2).split(".");
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${sign}${parts[0]}.${parts[1]} ${lang === "ar" ? "ر.س" : "SAR"}`;
-}
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-function exportReport(rows, filename, format) {
-  if (!rows.length) return;
-  if (format === "excel") {
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Report");
-    XLSX.writeFile(wb, `${filename}.xlsx`);
-  } else if (format === "html") {
-    const headers = Object.keys(rows[0]);
-    const html = `<table dir="rtl" border="1" style="border-collapse:collapse;font-family:sans-serif">
-      <tr>${headers.map((h) => `<th style="padding:6px 10px;background:#F5F0E4">${h}</th>`).join("")}</tr>
-      ${rows.map((r) => `<tr>${headers.map((h) => `<td style="padding:6px 10px">${r[h]}</td>`).join("")}</tr>`).join("")}
-    </table>`;
-    downloadBlob(new Blob([html], { type: "text/html" }), `${filename}.html`);
-  } else {
-    const headers = Object.keys(rows[0]);
-    const text = [headers.join("\t"), ...rows.map((r) => headers.map((h) => r[h]).join("\t"))].join("\n");
-    downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${filename}.txt`);
-  }
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
-const TYPE_META = {
-  asset: { label: "الأصول", normal: "debit", color: "#B45309" },
-  liability: { label: "الخصوم", normal: "credit", color: "#B91C1C" },
-  equity: { label: "حقوق الملكية", normal: "credit", color: "#047857" },
-  revenue: { label: "الإيرادات", normal: "credit", color: "#047857" },
-  expense: { label: "المصروفات", normal: "debit", color: "#B91C1C" },
-};
-const TYPE_ORDER = ["asset", "liability", "equity", "revenue", "expense"];
-const STORAGE_KEY = "alameen-lite-data-v2";
+// دالة لجلب السنة والشهر الحاليين لمعالجة العمليات الدورية كالإهلاك والرواتب (YYYY-MM)
+function monthKey() {
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${d.getFullYear()}-${month}`;
+}
 
-/* ============================== i18n ============================== */
-
+/* ============================== Translations Dictionary (STR) ============================== */
 const STR = {
   ar: {
-    appName: "الأمين لايت", tagline: "نظام محاسبي وERP متكامل",
-    nav_dashboard: "لوحة التحكم", nav_accounts: "شجرة الحسابات", nav_entries: "القيود اليومية",
-    nav_reports: "التقارير", nav_invoices: "الفواتير", nav_pos: "نقطة البيع",
-    nav_inventory: "الأصناف والمخزون", nav_supplyProduction: "التوريد والإنتاج",
-    nav_crm: "العملاء والموردون", nav_hr: "الموظفون والرواتب", nav_fixedAssets: "الأصول الثابتة",
-    nav_orgSettings: "الفروع والمستودعات", nav_usersRoles: "المستخدمون والصلاحيات", nav_settings: "الإعدادات والمساعدة",
-    grp_accounting: "المحاسبة", grp_sales: "المبيعات والمخزون", grp_enterprise: "المؤسسة", grp_admin: "الإدارة",
-    title_dashboard: "لوحة التحكم", sub_dashboard: "نظرة عامة على المركز المالي",
-    title_accounts: "شجرة الحسابات", sub_accounts: "إدارة الحسابات المحاسبية",
-    title_entries: "القيود اليومية", sub_entries: "سجل العمليات المحاسبية بنظام القيد المزدوج",
-    title_reports: "التقارير", sub_reports: "ميزان المراجعة وكشوف الحسابات ومراكز التكلفة",
-    title_invoices: "الفواتير", sub_invoices: "فواتير المبيعات والمشتريات مع ترحيل تلقائي",
-    title_pos: "نقطة البيع", sub_pos: "بيع سريع للعملاء النقديين",
-    title_inventory: "الأصناف والمخزون", sub_inventory: "إدارة الأصناف عبر مستودعات متعددة",
-    title_supplyProduction: "التوريد والإنتاج", sub_supplyProduction: "أوامر الشراء وأوامر التصنيع البسيطة",
-    title_crm: "العملاء والموردون", sub_crm: "دليل جهات الاتصال التجارية",
-    title_hr: "الموظفون والرواتب", sub_hr: "إدارة الموظفين وتشغيل الرواتب الشهرية",
-    title_fixedAssets: "الأصول الثابتة", sub_fixedAssets: "سجل الأصول وإهلاكها الشهري",
-    title_orgSettings: "الفروع والمستودعات ومراكز التكلفة", sub_orgSettings: "البنية التنظيمية للمنشأة",
-    title_usersRoles: "المستخدمون والصلاحيات", sub_usersRoles: "تحكم هرمي بصلاحيات الوصول لكل وحدة",
-    title_settings: "الإعدادات والمساعدة", sub_settings: "اللغة، الإصدار، مستوى الواجهة، ودليل الاستخدام",
-    btn_add: "إضافة", btn_save: "حفظ", btn_cancel: "إلغاء", btn_edit: "تعديل", btn_delete: "حذف",
-    btn_close: "إغلاق", btn_excel: "Excel", btn_html: "HTML", btn_text: "نصي",
-    col_code: "الرمز", col_name: "الاسم", col_balance: "الرصيد", col_date: "التاريخ",
-    col_description: "البيان", col_debit: "مدين", col_credit: "دائن", col_total: "الإجمالي", col_actions: "إجراءات",
-    edition_desktop: "نسخة Desktop", edition_online: "نسخة أونلاين", edition_pro: "نسخة برو",
-    edition_desktop_badge: "غير متصل — شبكة محلية", edition_online_badge: "متصل — مزامنة سحابية ✓", edition_pro_badge: "الإصدار الأساسي المبسّط",
-    mode_simple: "مبسطة", mode_standard: "متوسطة", mode_advanced: "متقدمة",
-    all_branches: "كل الفروع",
+    app_title: "الأمين لايت",
+    title_dashboard: "لوحة التحكم",
+    sub_dashboard: "ملخص مالي ومخزني سريع لأداء شركتك",
+    title_accounts: "شجرة الحسابات",
+    sub_accounts: "إدارة الحسابات المالية وتصنيفاتها المعتمدة",
+    title_entries: "القيود اليومية",
+    sub_entries: "تسجيل وترحيل القيود المحاسبية المزدوجة يدوياً",
+    title_inventory: "إدارة المخزون",
+    sub_inventory: "إدارة الأصناف، وحداتها، ومراقبة الكميات بالمستودعات",
+    title_invoices: "الفواتير",
+    sub_invoices: "إنشاء وإصدار فواتير المبيعات والمشتريات والربط المحاسبي",
+    title_pos: "نقطة البيع (POS)",
+    sub_pos: "واجهة بيع سريعة للمبيعات المباشرة وربطها بالصندوق والمخزن",
+    title_supplyProduction: "التصنيع وسلاسل الإمداد",
+    sub_supplyProduction: "أوامر الشراء وإدارة عمليات التصنيع وتحويل المواد",
+    title_crm: "العملاء والمبيعات (CRM)",
+    sub_crm: "بيانات العملاء، الموردين وتتبع تفاعلاتهم",
+    title_hr: "الموارد البشرية والرواتب",
+    sub_hr: "ملفات الموظفين واحتساب مسيرات الرواتب الشهرية والقيود الخاصة بها",
+    title_fixedAssets: "الأصول الثابتة",
+    sub_fixedAssets: "تسجيل الأصول، فترات عمرها الإنتاجي، والاحتساب التلقائي للإهلاك",
+    title_orgSettings: "الفروع والمراكز",
+    sub_orgSettings: "تهيئة فروع الشركة، مستودعاتها، ومراكز التكلفة المتاحة",
+    title_usersRoles: "المستخدمين والصلاحيات",
+    sub_usersRoles: "توزيع الصلاحيات وأدوار الموظفين لضبط الأمان والنظام",
+    title_reports: "التقارير المالية",
+    sub_reports: "استخراج القوائم المالية، ميزان المراجعة، وتقارير مراكز التكلفة",
+    title_settings: "الإعدادات العامة",
+    sub_settings: "ضبط لغة الواجهة الأساسية والنسخ الاحتياطي للبيانات المحلية",
   },
   en: {
-    appName: "Al-Ameen Lite", tagline: "Integrated accounting & ERP system",
-    nav_dashboard: "Dashboard", nav_accounts: "Chart of Accounts", nav_entries: "Journal Entries",
-    nav_reports: "Reports", nav_invoices: "Invoices", nav_pos: "Point of Sale",
-    nav_inventory: "Items & Inventory", nav_supplyProduction: "Supply & Production",
-    nav_crm: "Customers & Suppliers", nav_hr: "HR & Payroll", nav_fixedAssets: "Fixed Assets",
-    nav_orgSettings: "Branches & Warehouses", nav_usersRoles: "Users & Permissions", nav_settings: "Settings & Help",
-    grp_accounting: "Accounting", grp_sales: "Sales & Inventory", grp_enterprise: "Enterprise", grp_admin: "Administration",
-    title_dashboard: "Dashboard", sub_dashboard: "Financial position overview",
-    title_accounts: "Chart of Accounts", sub_accounts: "Manage ledger accounts",
-    title_entries: "Journal Entries", sub_entries: "Double-entry transaction log",
-    title_reports: "Reports", sub_reports: "Trial balance, account ledger & cost centers",
-    title_invoices: "Invoices", sub_invoices: "Sales & purchase invoices with auto-posting",
-    title_pos: "Point of Sale", sub_pos: "Fast checkout for walk-in customers",
-    title_inventory: "Items & Inventory", sub_inventory: "Manage items across multiple warehouses",
-    title_supplyProduction: "Supply & Production", sub_supplyProduction: "Purchase orders and simple assembly orders",
-    title_crm: "Customers & Suppliers", sub_crm: "Business contact directory",
-    title_hr: "HR & Payroll", sub_hr: "Manage employees and run monthly payroll",
-    title_fixedAssets: "Fixed Assets", sub_fixedAssets: "Asset register and monthly depreciation",
-    title_orgSettings: "Branches, Warehouses & Cost Centers", sub_orgSettings: "Organizational structure",
-    title_usersRoles: "Users & Permissions", sub_usersRoles: "Hierarchical access control per module",
-    title_settings: "Settings & Help", sub_settings: "Language, edition, UI complexity, and user guide",
-    btn_add: "Add", btn_save: "Save", btn_cancel: "Cancel", btn_edit: "Edit", btn_delete: "Delete",
-    btn_close: "Close", btn_excel: "Excel", btn_html: "HTML", btn_text: "Text",
-    col_code: "Code", col_name: "Name", col_balance: "Balance", col_date: "Date",
-    col_description: "Description", col_debit: "Debit", col_credit: "Credit", col_total: "Total", col_actions: "Actions",
-    edition_desktop: "Desktop Edition", edition_online: "Online Edition", edition_pro: "Pro Edition",
-    edition_desktop_badge: "Offline — local network", edition_online_badge: "Connected — cloud sync ✓", edition_pro_badge: "Simplified core edition",
-    mode_simple: "Simple", mode_standard: "Standard", mode_advanced: "Advanced",
-    all_branches: "All branches",
+    app_title: "Al-Ameen Lite",
+    title_dashboard: "Dashboard",
+    sub_dashboard: "Quick financial & inventory performance overview",
+    title_accounts: "Chart of Accounts",
+    sub_accounts: "Manage financial accounts and their classifications",
+    title_entries: "Journal Entries",
+    sub_entries: "Record and post double-entry bookkeeping manually",
+    title_inventory: "Inventory Management",
+    sub_inventory: "Items, units, and stock tracking across warehouses",
+    title_invoices: "Invoices",
+    sub_invoices: "Issue sales/purchase invoices linked to finance and stock",
+    title_pos: "Point of Sale (POS)",
+    sub_pos: "Fast checkout interface linked directly to cash & inventory",
+    title_supplyProduction: "Supply & Production",
+    sub_supplyProduction: "Purchase orders, production cycles, and BOM",
+    title_crm: "CRM",
+    sub_crm: "Customers, suppliers data, and sales opportunities",
+    title_hr: "HR & Payroll",
+    sub_hr: "Employee profiles, monthly payroll processing & journal auto-posts",
+    title_fixedAssets: "Fixed Assets",
+    sub_fixedAssets: "Assets register, useful life tracking, and depreciation runs",
+    title_orgSettings: "Branches & Centers",
+    sub_orgSettings: "Setup company branches, warehouses, and cost centers",
+    title_usersRoles: "Users & Permissions",
+    sub_usersRoles: "Distribute permissions and user roles to ensure security",
+    title_reports: "Financial Reports",
+    sub_reports: "Extract financial statements, Trial Balance & cost center analyses",
+    title_settings: "General Settings",
+    sub_settings: "Configure main UI language and local data backups",
+  }
+};
+
+/* ============================== Dummy Initial Data ============================== */
+const INITIAL_DATA = {
+  meta: {
+    language: "ar",
+    activeBranchId: "b1",
+    activeWarehouseId: "w1",
+    activeUserId: "u1"
   },
-};
-
-const LangContext = createContext({ lang: "ar", t: (k) => k });
-function useLang() {
-  return useContext(LangContext);
-}
-
-/* ============================== nav config ============================== */
-
-const NAV_GROUPS = [
-  { titleKey: "grp_accounting", items: [
-      { key: "dashboard", icon: LayoutDashboard },
-      { key: "accounts", icon: BookOpen },
-      { key: "entries", icon: FileText },
-      { key: "reports", icon: TrendingUp },
-  ]},
-  { titleKey: "grp_sales", items: [
-      { key: "invoices", icon: Receipt },
-      { key: "pos", icon: ShoppingCart },
-      { key: "inventory", icon: Package },
-      { key: "supplyProduction", icon: Factory },
-  ]},
-  { titleKey: "grp_enterprise", items: [
-      { key: "crm", icon: Contact2 },
-      { key: "hr", icon: Users },
-      { key: "fixedAssets", icon: Building2 },
-  ]},
-  { titleKey: "grp_admin", items: [
-      { key: "orgSettings", icon: MapPin },
-      { key: "usersRoles", icon: ShieldCheck },
-      { key: "settings", icon: SettingsIcon },
-  ]},
-];
-
-const MODE_KEYS = {
-  simple: ["dashboard", "invoices", "pos", "inventory", "reports", "settings"],
-  standard: ["dashboard", "invoices", "pos", "inventory", "reports", "settings", "accounts", "entries", "orgSettings", "crm", "supplyProduction"],
-  advanced: ["dashboard", "invoices", "pos", "inventory", "reports", "settings", "accounts", "entries", "orgSettings", "crm", "supplyProduction", "hr", "fixedAssets", "usersRoles"],
-};
-
-/* ============================== seed data ============================== */
-
-function seedData() {
-  const accounts = [
-    { id: "a1", code: "1001", name: "الصندوق", type: "asset" },
-    { id: "a2", code: "1002", name: "البنك", type: "asset" },
-    { id: "a3", code: "1003", name: "المدينون (الزبائن)", type: "asset" },
-    { id: "a4", code: "1004", name: "المخزون", type: "asset" },
-    { id: "a5", code: "1005", name: "الأصول الثابتة", type: "asset" },
-    { id: "a6", code: "1006", name: "مجمع الإهلاك", type: "asset", normalOverride: "credit" },
-    { id: "a7", code: "2001", name: "الدائنون (الموردون)", type: "liability" },
-    { id: "a8", code: "3001", name: "رأس المال", type: "equity" },
-    { id: "a9", code: "4001", name: "إيرادات المبيعات", type: "revenue" },
-    { id: "a10", code: "5001", name: "تكلفة البضاعة المباعة", type: "expense" },
-    { id: "a11", code: "5002", name: "مصاريف تشغيلية", type: "expense" },
-    { id: "a12", code: "5003", name: "مصروف الرواتب", type: "expense" },
-    { id: "a13", code: "5004", name: "مصروف الإهلاك", type: "expense" },
-  ];
-  const warehouses = [
-    { id: "w1", name: "المستودع الرئيسي" },
-    { id: "w2", name: "مستودع الفرع الثانوي" },
-  ];
-  const branches = [
-    { id: "b1", name: "الفرع الرئيسي", city: "الرياض" },
-    { id: "b2", name: "فرع جدة", city: "جدة" },
-  ];
-  const costCenters = [
-    { id: "cc1", name: "الإدارة العامة" },
-    { id: "cc2", name: "قسم المبيعات" },
-  ];
-  const roles = [
-    { id: "r1", name: "مدير النظام", permissions: allTrue() },
-    { id: "r2", name: "محاسب", permissions: { ...allTrue(), hr: false, purchaseOrders: false, usersRoles: false, supplyProduction: false } },
-    { id: "r3", name: "موظف مبيعات", permissions: { dashboard: true, invoices: true, pos: true, inventory: true, crm: true, reports: false, accounts: false, entries: false, hr: false, fixedAssets: false, orgSettings: false, usersRoles: false, supplyProduction: false, settings: true } },
-  ];
-  const users = [
-    { id: "u1", name: "أحمد المدير", roleId: "r1" },
-    { id: "u2", name: "سارة المحاسبة", roleId: "r2" },
-    { id: "u3", name: "خالد المبيعات", roleId: "r3" },
-  ];
-  const customers = [
-    { id: "c1", name: "شركة النور التجارية", type: "customer", phone: "0501234567" },
-    { id: "c2", name: "مؤسسة الفجر", type: "customer", phone: "0559876543" },
-    { id: "c3", name: "مصنع الاتحاد للتوريدات", type: "supplier", phone: "0112223344" },
-  ];
-  const employees = [
-    { id: "emp1", name: "محمد العتيبي", position: "محاسب", salary: 6000 },
-    { id: "emp2", name: "فهد القحطاني", position: "مندوب مبيعات", salary: 4500 },
-  ];
-  const fixedAssets = [
-    { id: "fa1", name: "سيارة توصيل", cost: 60000, usefulLifeMonths: 60, purchaseDate: todayStr(), accumulatedDepreciation: 0 },
-  ];
-  const items = [
-    { id: "i1", name: "لابتوب Dell Inspiron", unit: "قطعة", barcodes: ["6281001"], cost: 2200, price: 2800, stock: { w1: 10, w2: 2 } },
-    { id: "i2", name: "طابعة HP LaserJet", unit: "قطعة", barcodes: ["6281002"], cost: 650, price: 900, stock: { w1: 2, w2: 1 } },
-    { id: "i3", name: "ورق تصوير A4 (رزمة)", unit: "رزمة", barcodes: ["6281003", "6281004"], cost: 15, price: 22, stock: { w1: 30, w2: 10 } },
-  ];
-  const entries = [
+  users: [
+    { id: "u1", name: "أحمد محاسب النظام", roleId: "r1" },
+    { id: "u2", name: "خالد مسؤول المستودع", roleId: "r2" }
+  ],
+  roles: [
+    { id: "r1", name: "مدير النظام / محاسب رئيسي", permissions: { dashboard: true, accounts: true, entries: true, inventory: true, invoices: true, pos: true, supplyProduction: true, crm: true, hr: true, fixedAssets: true, orgSettings: true, usersRoles: true, reports: true, settings: true } },
+    { id: "r2", name: "أمين مخزن", permissions: { dashboard: true, accounts: false, entries: false, inventory: true, invoices: true, pos: false, supplyProduction: true, crm: false, hr: false, fixedAssets: false, orgSettings: false, usersRoles: false, reports: false, settings: false } }
+  ],
+  branches: [
+    { id: "b1", name: "الفرع الرئيسي - الرياض" },
+    { id: "b2", name: "فرع الغربية - جدة" }
+  ],
+  warehouses: [
+    { id: "w1", name: "المستودع المركزي", branchId: "b1" },
+    { id: "w2", name: "مستودع العرض المباشر", branchId: "b1" }
+  ],
+  costCenters: [
+    { id: "cc1", name: "قسم المشاريع الإنشائية" },
+    { id: "cc2", name: "قسم المبيعات والتسويق" }
+  ],
+  accounts: [
+    { id: "a1", code: "1001", name: "الصندوق", type: "asset", parentId: null },
+    { id: "a2", code: "1002", name: "البنك العربي", type: "asset", parentId: null },
+    { id: "a3", code: "1003", name: "الذمم المدينة (العملاء)", type: "asset", parentId: null },
+    { id: "a4", code: "1004", name: "مخزون المواد الجاهزة", type: "asset", parentId: null },
+    { id: "a5", code: "1005", name: "الأصول الثابتة - آلات ومعدات", type: "asset", parentId: null },
+    { id: "a6", code: "1006", name: "مجمع إهلاك الأصول الثابتة", type: "asset", parentId: null },
+    { id: "a7", code: "2001", name: "الذمم الدائنة (الموردين)", type: "liability", parentId: null },
+    { id: "a8", code: "3001", name: "رأس المال المدفوع", type: "equity", parentId: null },
+    { id: "a9", code: "4001", name: "إيرادات المبيعات الرئيسية", type: "revenue", parentId: null },
+    { id: "a10", code: "5001", name: "تكلفة البضاعة المباعة", type: "expense", parentId: null },
+    { id: "a11", code: "5002", name: "مصروفات الرواتب والأجور", type: "expense", parentId: null }
+  ],
+  entries: [
     {
-      id: "e1", no: 1, date: todayStr(), description: "قيد افتتاحي - إيداع رأس المال",
-      lines: [{ accountId: "a1", debit: 80000, credit: 0 }, { accountId: "a8", debit: 0, credit: 80000 }],
-      posted: true, branchId: "b1", costCenterId: null,
-    },
-  ];
-  return {
-    accounts, warehouses, branches, costCenters, roles, users, customers, employees, fixedAssets, items, entries,
-    invoices: [], purchaseOrders: [], productionOrders: [], payrollRuns: [], depreciationRuns: [],
-    meta: { companyName: "مؤسستي التجارية", language: "ar", edition: "online", uiMode: "advanced", activeBranchId: "b1", activeUserId: "u1" },
-  };
-}
-function allTrue() {
-  return {
-    dashboard: true, accounts: true, entries: true, reports: true, invoices: true, pos: true, inventory: true,
-    supplyProduction: true, crm: true, hr: true, fixedAssets: true, orgSettings: true, usersRoles: true, settings: true,
-  };
-}
+      id: "e1",
+      no: 1,
+      date: "2026-01-01",
+      description: "القيد الافتتاحي - بدء النشاط برأس مال بالصندوق",
+      posted: true,
+      branchId: "b1",
+      costCenterId: null,
+      lines: [
+        { accountId: "a1", debit: 100000, credit: 0 },
+        { accountId: "a8", debit: 0, credit: 100000 }
+      ]
+    }
+  ],
+  items: [
+    { id: "it1", name: "شاشة كمبيوتر 27 بوصة", unit: "قطعة", barcodes: ["628100200"], cost: 600, price: 850, stock: { w1: 50, w2: 12 } },
+    { id: "it2", name: "لوحة مفاتيح ميكانيكية", unit: "قطعة", barcodes: ["628100300"], cost: 120, price: 180, stock: { w1: 100, w2: 5 } }
+  ],
+  invoices: [],
+  purchaseOrders: [],
+  productionOrders: [],
+  customers: [
+    { id: "c1", name: "شركة النخبة للتجارة", phone: "0500000001", type: "customer" },
+    { id: "s1", name: "مؤسسة التوريدات المتقدمة", phone: "0500000002", type: "supplier" }
+  ],
+  employees: [
+    { id: "emp1", name: "سعيد محمد", position: "مهندس برمجيات", salary: 12000 }
+  ],
+  payrollRuns: [],
+  fixedAssets: [],
+  depreciationRuns: []
+};
 
-/* ============================== small UI atoms ============================== */
-
-function StatCard({ icon: Icon, label, value, tone = "stone" }) {
-  const toneMap = {
-    amber: "text-amber-700 bg-amber-50 border-amber-200",
-    emerald: "text-emerald-700 bg-emerald-50 border-emerald-200",
-    red: "text-red-700 bg-red-50 border-red-200",
-    stone: "text-stone-700 bg-stone-100 border-stone-200",
-  };
-  return (
-    <div className="bg-white border border-stone-200 rounded-xl p-4 flex items-center gap-4">
-      <div className={`w-11 h-11 rounded-full flex items-center justify-center border shrink-0 ${toneMap[tone]}`}>
-        <Icon size={20} />
-      </div>
-      <div className="min-w-0">
-        <div className="text-xs text-stone-500 font-body">{label}</div>
-        <div className="font-num text-lg font-semibold text-stone-900 truncate">{value}</div>
-      </div>
-    </div>
-  );
-}
-
-function Modal({ title, onClose, children, wide }) {
-  return (
-    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: "rgba(28,25,20,0.55)" }} onClick={onClose}>
-      <div className={`bg-stone-50 rounded-2xl shadow-xl w-full ${wide ? "max-w-2xl" : "max-w-md"} overflow-y-auto`} style={{ maxHeight: "88vh" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200 sticky top-0 bg-stone-50 z-10">
-          <h3 className="font-display text-lg text-stone-900">{title}</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-700"><X size={20} /></button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="block mb-3">
-      <span className="block text-xs font-body text-stone-600 mb-1">{label}</span>
-      {children}
-    </label>
-  );
-}
-const inputCls = "w-full border border-stone-300 rounded-lg px-3 py-2 text-sm font-body bg-white focus:outline-none focus:ring-2 focus:ring-amber-600 focus:border-amber-600";
-
-function ExportBar({ rows, filename }) {
-  const { t } = useLang();
-  return (
-    <div className="flex gap-2 justify-end">
-      {["excel", "html", "text"].map((f) => (
-        <button key={f} onClick={() => exportReport(rows, filename, f)} className="flex items-center gap-1 text-xs font-body px-3 py-1.5 rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-100">
-          <Download size={13} /> {t(`btn_${f === "excel" ? "excel" : f === "html" ? "html" : "text"}`)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function EmptyRow({ colSpan, text }) {
-  return (
-    <tr><td colSpan={colSpan} className="px-4 py-6 text-center text-stone-400 font-body">{text}</td></tr>
-  );
-}
-
-/* ============================== navigation ============================== */
-
-function EditionBadge({ meta }) {
-  const { t } = useLang();
-  const map = { desktop: { icon: HardDrive, key: "edition_desktop_badge" }, online: { icon: Cloud, key: "edition_online_badge" }, pro: { icon: Package, key: "edition_pro_badge" } };
-  const info = map[meta.edition];
-  const Icon = info.icon;
-  return (
-    <div className="flex items-center gap-1.5 text-xs text-stone-400 font-body mt-1">
-      <Icon size={12} /> <span>{t(info.key)}</span>
-    </div>
-  );
-}
-
+/* ============================== Simple UI Components ============================== */
 function Sidebar({ active, setActive, data, allowedKeys }) {
-  const { t } = useLang();
   return (
-    <aside className="hidden md:flex w-64 shrink-0 bg-stone-900 text-stone-100 flex-col min-h-screen sticky top-0">
-      <div className="p-5 border-b border-stone-700">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-full border-2 border-amber-600 flex items-center justify-center shrink-0">
-            <span className="font-display text-amber-500 text-lg">أ</span>
-          </div>
-          <div className="min-w-0">
-            <div className="font-display text-lg leading-tight">{t("appName")}</div>
-            <div className="text-xs text-stone-400 truncate">{data.meta.companyName}</div>
-          </div>
-        </div>
-        <EditionBadge meta={data.meta} />
+    <aside className="w-64 bg-stone-900 text-stone-300 flex-col hidden md:flex min-h-screen border-l border-stone-800">
+      <div className="p-5 border-b border-stone-800 flex items-center gap-2">
+        <div className="h-3 w-3 rounded-full bg-emerald-500"></div>
+        <h1 className="font-display font-bold text-lg text-white">الأمين لايت ERP</h1>
       </div>
-      <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
-        {NAV_GROUPS.map((group) => {
-          const visibleItems = group.items.filter((it) => allowedKeys.includes(it.key));
-          if (visibleItems.length === 0) return null;
-          return (
-            <div key={group.titleKey}>
-              <div className="text-xs text-stone-500 font-body px-3 mb-1">{t(group.titleKey)}</div>
-              <div className="space-y-1">
-                {visibleItems.map((it) => {
-                  const Icon = it.icon;
-                  const isActive = active === it.key;
-                  return (
-                    <button key={it.key} onClick={() => setActive(it.key)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-body transition-colors ${isActive ? "bg-amber-700 text-white" : "text-stone-300 hover:bg-stone-800"}`}>
-                      <Icon size={18} /> <span>{t(`nav_${it.key}`)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        {allowedKeys.map((key) => (
+          <button
+            key={key}
+            onClick={() => setActive(key)}
+            className={`w-full text-right px-3 py-2 rounded-lg text-sm font-body transition-all flex items-center justify-between ${
+              active === key ? "bg-stone-800 text-white font-medium" : "hover:bg-stone-800/50 text-stone-400"
+            }`}
+          >
+            <span>{STR[data.meta.language || "ar"][`title_${key}`]}</span>
+          </button>
+        ))}
       </nav>
     </aside>
   );
 }
 
 function TopNav({ active, setActive, allowedKeys }) {
-  const { t } = useLang();
-  const flatItems = NAV_GROUPS.flatMap((g) => g.items).filter((it) => allowedKeys.includes(it.key));
   return (
-    <div className="md:hidden sticky top-0 z-30 bg-stone-900 text-stone-100 overflow-x-auto">
-      <div className="flex gap-1 p-2 w-max">
-        {flatItems.map((it) => {
-          const Icon = it.icon;
-          const isActive = active === it.key;
-          return (
-            <button key={it.key} onClick={() => setActive(it.key)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs whitespace-nowrap font-body ${isActive ? "bg-amber-700 text-white" : "text-stone-300"}`}>
-              <Icon size={14} /> <span>{t(`nav_${it.key}`)}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <header className="bg-stone-900 text-stone-300 md:hidden flex items-center justify-between px-4 py-3 border-b border-stone-800">
+      <h1 className="font-display font-bold text-sm text-white">الأمين لايت ERP</h1>
+      <select
+        value={active}
+        onChange={(e) => setActive(e.target.value)}
+        className="bg-stone-800 text-xs rounded border border-stone-700 px-2 py-1 text-white font-body focus:outline-none"
+      >
+        {allowedKeys.map((key) => (
+          <option key={key} value={key}>{STR.ar[`title_${key}`]}</option>
+        ))}
+      </select>
+    </header>
   );
 }
 
-/* ============================== Dashboard ============================== */
-
+/* --- Views & Forms --- */
 function DashboardView({ data, getAccountBalance, getTypeTotal }) {
-  const { lang } = useLang();
-  const [branchFilter, setBranchFilter] = useState("all");
-  const { t } = useLang();
-
-  const filteredEntries = branchFilter === "all" ? data.entries : data.entries.filter((e) => e.branchId === branchFilter);
-  const localBalance = (account) => {
-    let raw = 0;
-    filteredEntries.forEach((e) => e.lines.forEach((l) => { if (l.accountId === account.id) raw += (Number(l.debit) || 0) - (Number(l.credit) || 0); }));
-    const normal = account.normalOverride || TYPE_META[account.type].normal;
-    return normal === "debit" ? raw : -raw;
-  };
-  const localTypeTotal = (type) => data.accounts.filter((a) => a.type === type).reduce((s, a) => s + localBalance(a), 0);
-
-  const assets = localTypeTotal("asset");
-  const liabilities = localTypeTotal("liability");
-  const revenue = localTypeTotal("revenue");
-  const expense = localTypeTotal("expense");
-  const netIncome = revenue - expense;
-  const cashAcc = data.accounts.find((a) => a.code === "1001");
-  const bankAcc = data.accounts.find((a) => a.code === "1002");
-  const cash = (cashAcc ? localBalance(cashAcc) : 0) + (bankAcc ? localBalance(bankAcc) : 0);
-
-  const chartData = TYPE_ORDER.map((tpe) => ({ name: TYPE_META[tpe].label, value: Math.round(localTypeTotal(tpe)), color: TYPE_META[tpe].color }));
-  const recentEntries = [...filteredEntries].slice(-5).reverse();
-  const lowStock = data.items.filter((i) => Object.values(i.stock || {}).reduce((s, q) => s + Number(q), 0) <= 5);
+  const t = useContext(LangContext).t;
+  const cashBalance = getAccountBalance("a1"); // الصندوق
+  const assetsTotal = getTypeTotal("asset");
+  const liabilitiesTotal = getTypeTotal("liability");
+  const revenuesTotal = getTypeTotal("revenue");
+  const expensesTotal = getTypeTotal("expense");
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <select className={inputCls} style={{ maxWidth: 220 }} value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
-          <option value="all">{t("all_branches")}</option>
-          {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={Landmark} label="إجمالي الأصول" value={formatCurrency(assets, lang)} tone="amber" />
-        <StatCard icon={CreditCard} label="إجمالي الخصوم" value={formatCurrency(liabilities, lang)} tone="red" />
-        <StatCard icon={netIncome >= 0 ? ArrowUpRight : ArrowDownRight} label="صافي الربح" value={formatCurrency(netIncome, lang)} tone={netIncome >= 0 ? "emerald" : "red"} />
-        <StatCard icon={Wallet} label="السيولة (صندوق + بنك)" value={formatCurrency(cash, lang)} tone="stone" />
-      </div>
-
-      <div className="bg-white border border-stone-200 rounded-xl p-4">
-        <h3 className="font-display text-base text-stone-900 mb-3">ملخص المركز المالي حسب نوع الحساب</h3>
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e7e0d0" />
-            <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#57534e" }} />
-            <YAxis tick={{ fontSize: 11, fill: "#57534e" }} />
-            <Tooltip formatter={(v) => formatCurrency(v, lang)} contentStyle={{ fontFamily: "IBM Plex Sans Arabic", direction: "rtl", textAlign: "right", fontSize: 12 }} />
-            <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-              {chartData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <div className="bg-white border border-stone-200 rounded-xl p-4">
-          <h3 className="font-display text-base text-stone-900 mb-3">آخر القيود</h3>
-          {recentEntries.length === 0 && <p className="text-sm text-stone-500 font-body">لا توجد قيود بعد.</p>}
-          <ul className="space-y-2">
-            {recentEntries.map((e) => {
-              const total = e.lines.reduce((s, l) => s + Number(l.debit || 0), 0);
-              return (
-                <li key={e.id} className="flex items-center justify-between text-sm border-b border-stone-100 pb-2 last:border-0">
-                  <div className="min-w-0"><div className="font-body text-stone-800 truncate">{e.description}</div><div className="text-xs text-stone-400 font-num">{e.date}</div></div>
-                  <div className="font-num text-stone-900 shrink-0 ms-2">{formatCurrency(total, lang)}</div>
-                </li>
-              );
-            })}
-          </ul>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+          <p className="text-xs text-stone-400 font-body">سيولة الصندوق</p>
+          <p className="text-2xl font-display font-semibold text-stone-800 mt-1">{cashBalance} <span className="text-xs text-stone-500">ر.س</span></p>
         </div>
-        <div className="bg-white border border-stone-200 rounded-xl p-4">
-          <h3 className="font-display text-base text-stone-900 mb-3 flex items-center gap-2"><AlertTriangle size={16} className="text-red-600" />أصناف منخفضة المخزون</h3>
-          {lowStock.length === 0 && <p className="text-sm text-stone-500 font-body">جميع الأصناف بكميات كافية.</p>}
-          <ul className="space-y-2">
-            {lowStock.map((i) => {
-              const total = Object.values(i.stock || {}).reduce((s, q) => s + Number(q), 0);
-              return (
-                <li key={i.id} className="flex items-center justify-between text-sm border-b border-stone-100 pb-2 last:border-0">
-                  <span className="font-body text-stone-800">{i.name}</span>
-                  <span className="font-num text-red-700 font-semibold">{total} {i.unit}</span>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+          <p className="text-xs text-stone-400 font-body">إجمالي الأصول</p>
+          <p className="text-2xl font-display font-semibold text-stone-800 mt-1">{assetsTotal} <span className="text-xs text-stone-500">ر.س</span></p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+          <p className="text-xs text-stone-400 font-body">إجمالي الإيرادات</p>
+          <p className="text-2xl font-display font-semibold text-emerald-600 mt-1">+{revenuesTotal} <span className="text-xs text-stone-500">ر.س</span></p>
+        </div>
+        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+          <p className="text-xs text-stone-400 font-body">إجمالي المصروفات</p>
+          <p className="text-2xl font-display font-semibold text-rose-600 mt-1">-{expensesTotal} <span className="text-xs text-stone-500">ر.س</span></p>
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm">
+        <h3 className="font-display font-semibold text-stone-800 text-sm mb-4">قائمة المركز المالي المبسطة</h3>
+        <div className="space-y-3 font-body text-sm">
+          <div className="flex justify-between border-b pb-2">
+            <span>الأصول (Assets)</span>
+            <span className="font-semibold">{assetsTotal} ر.س</span>
+          </div>
+          <div className="flex justify-between border-b pb-2">
+            <span>الالتزامات (Liabilities)</span>
+            <span className="font-semibold text-rose-600">{liabilitiesTotal} ر.س</span>
+          </div>
+          <div className="flex justify-between border-b pb-2">
+            <span>حقوق الملكية (Equity)</span>
+            <span className="font-semibold text-stone-700">{getTypeTotal("equity")} ر.س</span>
+          </div>
+          <div className="flex justify-between pt-2 text-emerald-700 font-semibold bg-emerald-50 px-2 rounded">
+            <span>الأرباح التشغيلية الحالية (Net Income)</span>
+            <span>{revenuesTotal - expensesTotal} ر.س</span>
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-/* ============================== Accounts ============================== */
 
 function AccountsView({ accounts, getAccountBalance, onAdd }) {
-  const { lang, t } = useLang();
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+      <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">دليل شجرة الحسابات المعتمدة</h3>
+        <button onClick={onAdd} className="bg-stone-900 hover:bg-stone-800 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">إضافة حساب +</button>
+      </div>
+      <table className="w-full text-right text-sm font-body">
+        <thead className="bg-stone-50 text-stone-500 text-xs">
+          <tr>
+            <th className="p-3">رمز الحساب</th>
+            <th className="p-3">اسم الحساب</th>
+            <th className="p-3">النوع الإداري</th>
+            <th className="p-3">الرصيد الحالي</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-stone-100 text-stone-700">
+          {accounts.map((acc) => (
+            <tr key={acc.id} className="hover:bg-stone-50/50">
+              <td className="p-3 font-mono font-bold text-stone-900">{acc.code}</td>
+              <td className="p-3 font-semibold">{acc.name}</td>
+              <td className="p-3"><span className="bg-stone-100 text-stone-600 px-2 py-0.5 rounded text-xs">{acc.type}</span></td>
+              <td className="p-3 font-bold text-stone-800">{getAccountBalance(acc.id)} ر.س</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EntriesView({ entries, accounts, costCenters, onAdd }) {
+  const getAccountName = (id) => accounts.find((a) => a.id === id)?.name || "غير محدد";
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-end">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> {t("btn_add")}</button>
+      <div className="flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">دفتر القيود اليومية المحاسبية</h3>
+        <button onClick={onAdd} className="bg-stone-900 hover:bg-stone-800 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">إنشاء قيد يدوي +</button>
       </div>
-      {TYPE_ORDER.map((type) => {
-        const list = accounts.filter((a) => a.type === type);
-        if (list.length === 0) return null;
-        return (
-          <div key={type} className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-stone-200" style={{ backgroundColor: "#F5F0E4" }}><h3 className="font-display text-sm text-stone-800">{TYPE_META[type].label}</h3></div>
-            <table className="w-full text-sm">
-              <thead><tr className="text-stone-500 font-body text-xs border-b border-stone-100"><th className="text-right px-4 py-2 font-medium">{t("col_code")}</th><th className="text-right px-4 py-2 font-medium">{t("col_name")}</th><th className="text-right px-4 py-2 font-medium">{t("col_balance")}</th></tr></thead>
-              <tbody>
-                {list.map((a) => {
-                  const bal = getAccountBalance(a);
-                  return (
-                    <tr key={a.id} className="border-b border-stone-50 last:border-0">
-                      <td className="px-4 py-2.5 font-num text-stone-500">{a.code}</td>
-                      <td className="px-4 py-2.5 font-body text-stone-800">{a.name}</td>
-                      <td className={`px-4 py-2.5 font-num font-semibold ${bal < 0 ? "text-red-700" : "text-stone-900"}`}>{formatCurrency(bal, lang)}</td>
-                    </tr>
-                  );
-                })}
+
+      <div className="space-y-4">
+        {entries.map((entry) => (
+          <div key={entry.id} className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden p-5 space-y-3">
+            <div className="flex items-center justify-between border-b pb-3 border-stone-100">
+              <div>
+                <span className="text-xs bg-stone-100 text-stone-600 font-mono px-2 py-1 rounded">قيد رقم #{entry.no}</span>
+                <p className="text-xs text-stone-400 font-body mt-1">{entry.date} - {entry.description}</p>
+              </div>
+              {entry.costCenterId && (
+                <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-1 rounded">
+                  مركز التكلفة: {costCenters.find((c) => c.id === entry.costCenterId)?.name}
+                </span>
+              )}
+            </div>
+
+            <table className="w-full text-right text-xs font-body">
+              <thead>
+                <tr className="text-stone-400">
+                  <th className="pb-2">اسم الحساب المالي</th>
+                  <th className="pb-2 text-left">مدين (Debit)</th>
+                  <th className="pb-2 text-left">دائن (Credit)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-50">
+                {entry.lines.map((l, i) => (
+                  <tr key={i} className="text-stone-700">
+                    <td className="py-2">{getAccountName(l.accountId)}</td>
+                    <td className="py-2 text-left font-semibold text-stone-800">{l.debit > 0 ? `${l.debit} ر.س` : "—"}</td>
+                    <td className="py-2 text-left font-semibold text-stone-800">{l.credit > 0 ? `${l.credit} ر.س` : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-function AccountModal({ form, setForm, onSubmit, onClose }) {
-  const { t } = useLang();
+function InventoryView({ items, warehouses, onAdd, onEdit }) {
   return (
-    <Modal title="إضافة حساب جديد" onClose={onClose}>
-      <Field label="رمز الحساب"><input className={inputCls} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="مثال: 1007" /></Field>
-      <Field label="اسم الحساب"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: عهدة نقدية" /></Field>
-      <Field label="نوع الحساب">
-        <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-          {TYPE_ORDER.map((tpe) => <option key={tpe} value={tpe}>{TYPE_META[tpe].label}</option>)}
-        </select>
-      </Field>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-2">{t("btn_save")}</button>
-    </Modal>
+    <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+      <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">بيان مستويات المخازن والأصناف</h3>
+        <button onClick={onAdd} className="bg-stone-900 hover:bg-stone-800 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">إضافة صنف جديد +</button>
+      </div>
+      <table className="w-full text-right text-sm font-body">
+        <thead className="bg-stone-50 text-stone-500 text-xs">
+          <tr>
+            <th className="p-3">اسم الصنف</th>
+            <th className="p-3">وحدة القياس</th>
+            <th className="p-3">سعر التكلفة</th>
+            <th className="p-3">سعر البيع</th>
+            <th className="p-3">الكميات بمستودع (المستودع المركزي)</th>
+            <th className="p-3 text-left">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-stone-100 text-stone-700">
+          {items.map((item) => (
+            <tr key={item.id} className="hover:bg-stone-50/50">
+              <td className="p-3 font-semibold">{item.name}</td>
+              <td className="p-3 text-stone-500 text-xs">{item.unit}</td>
+              <td className="p-3">{item.cost} ر.س</td>
+              <td className="p-3 font-semibold text-emerald-600">{item.price} ر.س</td>
+              <td className="p-3 font-bold text-stone-800">{item.stock?.w1 || 0} وحدة</td>
+              <td className="p-3 text-left">
+                <button onClick={() => onEdit(item)} className="text-xs text-stone-500 hover:text-stone-900 font-semibold underline">تعديل</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-/* ============================== Journal Entries ============================== */
-
-function EntriesView({ entries, accounts, costCenters, onAdd }) {
-  const { lang, t } = useLang();
-  const [openId, setOpenId] = useState(null);
-  const accName = (id) => accounts.find((a) => a.id === id)?.name || "—";
-  const ccName = (id) => costCenters.find((c) => c.id === id)?.name;
+function InvoicesView({ invoices, branches, onAdd }) {
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> قيد يدوي جديد</button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">سجل فواتير المبيعات والمشتريات</h3>
+        <button onClick={onAdd} className="bg-stone-900 hover:bg-stone-800 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">إصدار فاتورة جديدة +</button>
       </div>
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-        {[...entries].reverse().map((e) => {
-          const total = e.lines.reduce((s, l) => s + Number(l.debit || 0), 0);
-          const isOpen = openId === e.id;
-          return (
-            <div key={e.id} className="border-b border-stone-100 last:border-0">
-              <button onClick={() => setOpenId(isOpen ? null : e.id)} className="w-full flex items-center justify-between px-4 py-3 text-right hover:bg-stone-50">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="font-num text-xs text-stone-400 shrink-0">#{e.no}</span>
-                  <div className="min-w-0 text-right">
-                    <div className="font-body text-sm text-stone-800 truncate">{e.description}{e.costCenterId && <span className="text-stone-400"> · {ccName(e.costCenterId)}</span>}</div>
-                    <div className="font-num text-xs text-stone-400">{e.date}</div>
+
+      <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+        <table className="w-full text-right text-sm font-body">
+          <thead className="bg-stone-50 text-stone-500 text-xs">
+            <tr>
+              <th className="p-3">الرقم التلقائي</th>
+              <th className="p-3">النوع</th>
+              <th className="p-3">تاريخ الإصدار</th>
+              <th className="p-3">الطرف الثاني</th>
+              <th className="p-3">طريقة الدفع</th>
+              <th className="p-3 text-left">الإجمالي النهائي</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100 text-stone-700">
+            {invoices.map((inv) => (
+              <tr key={inv.id} className="hover:bg-stone-50/50">
+                <td className="p-3 font-mono">#{inv.no}</td>
+                <td className="p-3 font-semibold">
+                  <span className={`px-2 py-0.5 rounded text-xs ${inv.type === "sale" ? "bg-emerald-50 text-emerald-700" : "bg-orange-50 text-orange-700"}`}>
+                    {inv.type === "sale" ? "مبيعات" : "مشتريات"}
+                  </span>
+                </td>
+                <td className="p-3 text-stone-500 text-xs">{inv.date}</td>
+                <td className="p-3 font-semibold">{inv.partyName}</td>
+                <td className="p-3 text-xs">{inv.paymentMethod === "cash" ? "نقدي" : "آجل"}</td>
+                <td className="p-3 text-left font-bold text-stone-800">{inv.total} ر.س</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function POSView({ items, warehouses, onCheckout }) {
+  const [cart, setCart] = useState([]);
+  const [warehouseId, setWarehouseId] = useState("w1");
+
+  function addToCart(item) {
+    const existing = cart.find((c) => c.itemId === item.id);
+    if (existing) {
+      setCart(cart.map((c) => (c.itemId === item.id ? { ...c, qty: c.qty + 1 } : c)));
+    } else {
+      setCart([...cart, { itemId: item.id, name: item.name, qty: 1, price: item.price }]);
+    }
+  }
+
+  function updateCartQty(itemId, newQty) {
+    if (newQty <= 0) {
+      setCart(cart.filter((c) => c.itemId !== itemId));
+    } else {
+      setCart(cart.map((c) => (c.itemId === itemId ? { ...c, qty: newQty } : c)));
+    }
+  }
+
+  const total = cart.reduce((sum, item) => sum + item.qty * item.price, 0);
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* الأصناف المتاحة */}
+      <div className="lg:col-span-2 space-y-4">
+        <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-stone-200 shadow-sm">
+          <span className="text-sm font-semibold text-stone-800">اختر المستودع للبيع المباشر:</span>
+          <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className="bg-stone-50 border border-stone-200 text-xs rounded px-2 py-1 focus:outline-none">
+            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {items.map((item) => (
+            <div key={item.id} onClick={() => addToCart(item)} className="bg-white p-4 rounded-xl border border-stone-200 hover:border-stone-400 transition-all cursor-pointer flex flex-col justify-between">
+              <div>
+                <h4 className="font-semibold text-stone-800 text-sm font-display">{item.name}</h4>
+                <p className="text-xs text-stone-400 font-body mt-1">الرصيد المتاح: {item.stock[warehouseId] || 0} {item.unit}</p>
+              </div>
+              <div className="flex items-center justify-between mt-4 border-t pt-3 border-stone-50">
+                <span className="text-xs font-mono text-stone-400">باركود: {item.barcodes[0] || "—"}</span>
+                <span className="text-sm font-bold text-emerald-600">{item.price} ر.س</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* سلة البيع والدفع */}
+      <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm h-fit space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">سلة المبيعات النشطة</h3>
+
+        {cart.length === 0 ? (
+          <p className="text-stone-400 text-xs text-center py-10 font-body">السلة فارغة حالياً. انقر على الأصناف للبدء.</p>
+        ) : (
+          <>
+            <div className="divide-y divide-stone-100 max-h-60 overflow-y-auto space-y-2">
+              {cart.map((item) => (
+                <div key={item.itemId} className="flex items-center justify-between text-xs font-body py-2">
+                  <div>
+                    <p className="font-semibold text-stone-800">{item.name}</p>
+                    <p className="text-stone-400">{item.price} ر.س / وحدة</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => updateCartQty(item.itemId, item.qty - 1)} className="bg-stone-100 hover:bg-stone-200 rounded h-5 w-5 flex items-center justify-center font-bold">-</button>
+                    <span className="font-bold">{item.qty}</span>
+                    <button onClick={() => updateCartQty(item.itemId, item.qty + 1)} className="bg-stone-100 hover:bg-stone-200 rounded h-5 w-5 flex items-center justify-center font-bold">+</button>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="font-num text-sm font-semibold text-stone-900">{formatCurrency(total, lang)}</span>
-                  <ChevronDown size={16} className={`text-stone-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                </div>
-              </button>
-              {isOpen && (
-                <div className="px-4 pb-4">
-                  <table className="w-full text-xs bg-stone-50 rounded-lg overflow-hidden">
-                    <thead><tr className="text-stone-500 font-body"><th className="text-right px-3 py-2">الحساب</th><th className="text-right px-3 py-2">مدين</th><th className="text-right px-3 py-2">دائن</th></tr></thead>
-                    <tbody>
-                      {e.lines.map((l, idx) => (
-                        <tr key={idx} className="border-t border-stone-100">
-                          <td className="px-3 py-2 font-body text-stone-700">{accName(l.accountId)}</td>
-                          <td className="px-3 py-2 font-num text-stone-700">{l.debit ? formatCurrency(l.debit, lang) : "—"}</td>
-                          <td className="px-3 py-2 font-num text-stone-700">{l.credit ? formatCurrency(l.credit, lang) : "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              ))}
             </div>
-          );
-        })}
-        {entries.length === 0 && <EmptyRow colSpan={1} text="لا توجد قيود بعد." />}
+
+            <div className="border-t pt-4 space-y-2">
+              <div className="flex justify-between text-sm font-semibold text-stone-800">
+                <span>الإجمالي الإجمالي</span>
+                <span>{total} ر.س</span>
+              </div>
+              <button
+                onClick={() => {
+                  onCheckout(cart, warehouseId);
+                  setCart([]);
+                }}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-body py-2.5 rounded-lg text-xs font-semibold tracking-wide transition-all"
+              >
+                دفع وطباعة فاتورة نقدية (ر.س)
+              </button>
+            </div>
+          </>
+        )}
       </div>
-      <p className="text-xs text-stone-400 font-body">ملاحظة: لا يمكن حذف أو تعديل القيود المرحّلة حفاظاً على سلامة الدفاتر المحاسبية.</p>
+    </div>
+  );
+}
+
+function SupplyProductionView({ purchaseOrders, productionOrders, customers, items, onAddPO, onAddProd, onRunProd }) {
+  const getSupplierName = (id) => customers.find((c) => c.id === id)?.name || "مورد مجهول";
+  const getItemName = (id) => items.find((i) => i.id === id)?.name || "صنف مجهول";
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* أوامر الشراء المجدولة */}
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between border-b pb-3 border-stone-100">
+            <h3 className="font-display font-semibold text-stone-800 text-sm">أوامر الشراء ومتابعة الموردين</h3>
+            <button onClick={onAddPO} className="bg-stone-950 text-white text-xs px-2.5 py-1.5 rounded font-body">أمر شراء جديد +</button>
+          </div>
+          <div className="space-y-3">
+            {purchaseOrders.length === 0 ? <p className="text-xs text-stone-400 py-4 text-center">لا توجد طلبات شراء مسجلة</p> : null}
+            {purchaseOrders.map((po) => (
+              <div key={po.id} className="border border-stone-100 rounded-lg p-3 text-xs font-body space-y-2 bg-stone-50/50">
+                <div className="flex justify-between font-bold">
+                  <span>طلب شراء #{po.no}</span>
+                  <span className="text-stone-400">{po.date}</span>
+                </div>
+                <p className="text-stone-600">المورد: {getSupplierName(po.supplierId)}</p>
+                <div className="bg-white p-2 rounded border border-stone-100 text-[11px] text-stone-500">
+                  {po.lines.map((l, i) => <div key={i}>{getItemName(l.itemId)} × {l.qty} وحدة</div>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* أوامر وعمليات التصنيع */}
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between border-b pb-3 border-stone-100">
+            <h3 className="font-display font-semibold text-stone-800 text-sm">أوامر التصنيع ومراقبة الإنتاج</h3>
+            <button onClick={onAddProd} className="bg-stone-950 text-white text-xs px-2.5 py-1.5 rounded font-body">تشغيل دورة تصنيع +</button>
+          </div>
+          <div className="space-y-3">
+            {productionOrders.length === 0 ? <p className="text-xs text-stone-400 py-4 text-center">لم تطلق أي عمليات تصنيع حتى الآن</p> : null}
+            {productionOrders.map((po) => (
+              <div key={po.id} className="border border-stone-100 rounded-lg p-3 text-xs font-body space-y-2 bg-stone-50/50">
+                <div className="flex justify-between font-bold items-center">
+                  <span>عملية إنتاج #{po.no}</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] ${po.status === "done" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                    {po.status === "done" ? "منتهية" : "جاري المعالجة"}
+                  </span>
+                </div>
+                <p className="text-stone-800 font-semibold">الصنف المستهدف: {getItemName(po.finishedItemId)} (×{po.finishedQty})</p>
+                {po.status === "pending" && (
+                  <button onClick={() => onRunProd(po)} className="w-full bg-stone-900 text-stone-50 hover:bg-black font-semibold text-[11px] py-1 rounded transition-all">تأكيد سحب المكونات وإنهاء التصنيع</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CRMView({ customers, invoices, onAdd }) {
+  const customerList = customers.filter((c) => c.type === "customer");
+  const supplierList = customers.filter((c) => c.type === "supplier");
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between border-b pb-2 border-stone-100">
+            <h3 className="font-display font-semibold text-stone-800 text-sm">سجل بيانات العملاء</h3>
+            <button onClick={() => onAdd("customer")} className="bg-stone-900 text-white text-xs px-2 py-1 rounded font-body">+ عميل</button>
+          </div>
+          <table className="w-full text-right text-xs font-body">
+            <thead>
+              <tr className="text-stone-400">
+                <th className="pb-2">الاسم</th>
+                <th className="pb-2">رقم التواصل</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customerList.map((c) => (
+                <tr key={c.id} className="text-stone-700">
+                  <td className="py-2 font-semibold">{c.name}</td>
+                  <td className="py-2">{c.phone || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between border-b pb-2 border-stone-100">
+            <h3 className="font-display font-semibold text-stone-800 text-sm">سجل الموردين المعتمدين</h3>
+            <button onClick={() => onAdd("supplier")} className="bg-stone-900 text-white text-xs px-2 py-1 rounded font-body">+ مورد</button>
+          </div>
+          <table className="w-full text-right text-xs font-body">
+            <thead>
+              <tr className="text-stone-400">
+                <th className="pb-2">الاسم</th>
+                <th className="pb-2">رقم التواصل</th>
+              </tr>
+            </thead>
+            <tbody>
+              {supplierList.map((s) => (
+                <tr key={s.id} className="text-stone-700">
+                  <td className="py-2 font-semibold">{s.name}</td>
+                  <td className="py-2">{s.phone || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HRView({ employees, payrollRuns, onAdd, onRunPayroll }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">بيانات الموظفين والرواتب</h3>
+        <div className="flex gap-2">
+          <button onClick={onAdd} className="bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs px-3 py-1.5 rounded-lg font-body transition-all">إضافة موظف +</button>
+          <button onClick={onRunPayroll} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">تشغيل الرواتب هذا الشهر ⚙️</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <table className="w-full text-right text-sm font-body">
+            <thead className="bg-stone-50 text-stone-500 text-xs">
+              <tr>
+                <th className="p-3">اسم الموظف</th>
+                <th className="p-3">المسمى الوظيفي</th>
+                <th className="p-3">الراتب الأساسي</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100 text-stone-700">
+              {employees.map((e) => (
+                <tr key={e.id} className="hover:bg-stone-50/50">
+                  <td className="p-3 font-semibold">{e.name}</td>
+                  <td className="p-3 text-stone-500 text-xs">{e.position}</td>
+                  <td className="p-3 font-bold text-stone-800">{e.salary} ر.س</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4 h-fit">
+          <h3 className="font-display font-semibold text-stone-800 text-sm">مسيرات الرواتب المصروفة</h3>
+          <div className="space-y-2">
+            {payrollRuns.length === 0 ? <p className="text-xs text-stone-400 py-4 text-center">لم يصرف أي مسير رواتب حتى الآن</p> : null}
+            {payrollRuns.map((p) => (
+              <div key={p.id} className="bg-stone-50 p-3 rounded-lg border border-stone-100 flex justify-between items-center text-xs font-body">
+                <div>
+                  <p className="font-bold text-stone-800">مسير شهر: {p.month}</p>
+                  <p className="text-[10px] text-stone-400 mt-1">توليد القيد تلقائياً</p>
+                </div>
+                <span className="font-bold text-stone-700">{p.total} ر.س</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FixedAssetsView({ fixedAssets, depreciationRuns, onAdd, onRunDepreciation }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="font-display font-semibold text-sm text-stone-800">سجل إهلاك الأصول الثابتة</h3>
+        <div className="flex gap-2">
+          <button onClick={onAdd} className="bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs px-3 py-1.5 rounded-lg font-body transition-all">شراء أصل ثابت جديد +</button>
+          <button onClick={onRunDepreciation} className="bg-stone-900 hover:bg-stone-850 text-white text-xs px-3 py-1.5 rounded-lg font-body transition-all">تشغيل الإهلاك الشهري ⚙️</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+          <table className="w-full text-right text-sm font-body">
+            <thead className="bg-stone-50 text-stone-500 text-xs">
+              <tr>
+                <th className="p-3">اسم الأصل</th>
+                <th className="p-3">تكلفة الاقتناء</th>
+                <th className="p-3">العمر الإنتاجي</th>
+                <th className="p-3">مجمع الإهلاك الحالي</th>
+                <th className="p-3">القيمة الدفترية</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100 text-stone-700">
+              {fixedAssets.map((asset) => {
+                const bookValue = asset.cost - asset.accumulatedDepreciation;
+                return (
+                  <tr key={asset.id} className="hover:bg-stone-50/50">
+                    <td className="p-3 font-semibold">{asset.name}</td>
+                    <td className="p-3">{asset.cost} ر.س</td>
+                    <td className="p-3 text-xs text-stone-500">{asset.usefulLifeMonths} شهر</td>
+                    <td className="p-3 text-rose-600 font-semibold">{asset.accumulatedDepreciation} ر.س</td>
+                    <td className="p-3 font-bold text-stone-800">{bookValue} ر.س</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4 h-fit">
+          <h3 className="font-display font-semibold text-stone-800 text-sm">عمليات الاحتساب الدورية للبرنامج</h3>
+          <div className="space-y-2">
+            {depreciationRuns.length === 0 ? <p className="text-xs text-stone-400 py-4 text-center">لا توجد عمليات إهلاك مرصودة</p> : null}
+            {depreciationRuns.map((dr) => (
+              <div key={dr.id} className="bg-stone-50 p-3 rounded-lg border border-stone-100 flex justify-between items-center text-xs font-body">
+                <div>
+                  <p className="font-bold text-stone-800">إهلاك شهر: {dr.month}</p>
+                </div>
+                <span className="font-bold text-rose-600">-{dr.total} ر.س</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrgSettingsView({ branches, warehouses, costCenters, onAddBranch, onAddWarehouse, onAddCC }) {
+  const [bName, setBName] = useState("");
+  const [wName, setWName] = useState("");
+  const [ccName, setCCName] = useState("");
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* الفروع */}
+      <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">الفروع الإدارية للشركة</h3>
+        <div className="flex gap-2">
+          <input type="text" placeholder="اسم الفرع الجديد" value={bName} onChange={(e) => setBName(e.target.value)} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 flex-1 focus:outline-none" />
+          <button onClick={() => { if (bName.trim()) { onAddBranch({ name: bName }); setBName(""); } }} className="bg-stone-900 text-white text-xs px-3 rounded">+</button>
+        </div>
+        <ul className="divide-y divide-stone-100 text-xs font-body text-stone-700">
+          {branches.map((b) => <li key={b.id} className="py-2 font-semibold">📍 {b.name}</li>)}
+        </ul>
+      </div>
+
+      {/* المستودعات */}
+      <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">المستودعات ومواقع التخزين</h3>
+        <div className="flex gap-2">
+          <input type="text" placeholder="اسم المستودع" value={wName} onChange={(e) => setWName(e.target.value)} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 flex-1 focus:outline-none" />
+          <button onClick={() => { if (wName.trim()) { onAddWarehouse({ name: wName, branchId: "b1" }); setWName(""); } }} className="bg-stone-900 text-white text-xs px-3 rounded">+</button>
+        </div>
+        <ul className="divide-y divide-stone-100 text-xs font-body text-stone-700">
+          {warehouses.map((w) => <li key={w.id} className="py-2 font-semibold">📦 {w.name}</li>)}
+        </ul>
+      </div>
+
+      {/* مراكز التكلفة */}
+      <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">مراكز التكلفة المحاسبية</h3>
+        <div className="flex gap-2">
+          <input type="text" placeholder="مركز التكلفة" value={ccName} onChange={(e) => setCCName(e.target.value)} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 flex-1 focus:outline-none" />
+          <button onClick={() => { if (ccName.trim()) { onAddCC({ name: ccName }); setCCName(""); } }} className="bg-stone-900 text-white text-xs px-3 rounded">+</button>
+        </div>
+        <ul className="divide-y divide-stone-100 text-xs font-body text-stone-700">
+          {costCenters.map((cc) => <li key={cc.id} className="py-2 font-semibold">🏷️ {cc.name}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function UsersRolesView({ roles, users, onTogglePermission }) {
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-5 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">جدول مصفوفة الصلاحيات والأدوار الأمنية</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right text-xs font-body">
+            <thead className="bg-stone-50 text-stone-500 text-[10px]">
+              <tr>
+                <th className="p-2">الدور الوظيفي</th>
+                <th className="p-2">الحسابات</th>
+                <th className="p-2">القيود</th>
+                <th className="p-2">المخزن</th>
+                <th className="p-2">الفواتير</th>
+                <th className="p-2">الموارد البشرية</th>
+                <th className="p-2">التقارير</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100 text-stone-700">
+              {roles.map((r) => (
+                <tr key={r.id}>
+                  <td className="p-2 font-semibold">{r.name}</td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.accounts} onChange={() => onTogglePermission(r.id, "accounts")} /></td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.entries} onChange={() => onTogglePermission(r.id, "entries")} /></td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.inventory} onChange={() => onTogglePermission(r.id, "inventory")} /></td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.invoices} onChange={() => onTogglePermission(r.id, "invoices")} /></td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.hr} onChange={() => onTogglePermission(r.id, "hr")} /></td>
+                  <td className="p-2"><input type="checkbox" checked={!!r.permissions.reports} onChange={() => onTogglePermission(r.id, "reports")} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReportsView({ accounts, entries }) {
+  const [reportType, setReportType] = useState("trialBalance");
+
+  // دالة لحساب الإجمالي المدين والدائن لكل حساب في دفتر اليومية
+  const getAccountFinancials = (id) => {
+    let debitSum = 0;
+    let creditSum = 0;
+    entries.forEach((entry) => {
+      if (!entry.posted) return;
+      entry.lines.forEach((l) => {
+        if (l.accountId === id) {
+          debitSum += Number(l.debit || 0);
+          creditSum += Number(l.credit || 0);
+        }
+      });
+    });
+    return { debitSum, creditSum, balance: debitSum - creditSum };
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6 space-y-6">
+      <div className="flex items-center justify-between border-b pb-4 border-stone-100">
+        <h3 className="font-display font-semibold text-stone-800 text-sm">مستخرج القوائم والتقارير والختاميات المباشرة</h3>
+        <div className="flex gap-1.5">
+          <button onClick={() => setReportType("trialBalance")} className={`text-xs px-3 py-1.5 rounded font-body transition-all ${reportType === "trialBalance" ? "bg-stone-900 text-white font-semibold" : "bg-stone-50 hover:bg-stone-100"}`}>ميزان المراجعة</button>
+          <button onClick={() => setReportType("incomeStatement")} className={`text-xs px-3 py-1.5 rounded font-body transition-all ${reportType === "incomeStatement" ? "bg-stone-900 text-white font-semibold" : "bg-stone-50 hover:bg-stone-100"}`}>قائمة الدخل</button>
+        </div>
+      </div>
+
+      {reportType === "trialBalance" && (
+        <div className="space-y-4">
+          <h4 className="font-display text-stone-800 text-xs font-bold">ميزان المراجعة بالأرصدة</h4>
+          <table className="w-full text-right text-xs font-body">
+            <thead className="bg-stone-50 text-stone-500">
+              <tr>
+                <th className="p-2">الحساب</th>
+                <th className="p-2 text-left">أرصدة مدينة</th>
+                <th className="p-2 text-left">أرصدة دائنة</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-50 text-stone-700">
+              {accounts.map((acc) => {
+                const { balance } = getAccountFinancials(acc.id);
+                return (
+                  <tr key={acc.id}>
+                    <td className="p-2 font-semibold">{acc.name}</td>
+                    <td className="p-2 text-left font-mono font-bold text-stone-800">{balance > 0 ? `${balance} ر.س` : "—"}</td>
+                    <td className="p-2 text-left font-mono font-bold text-stone-800">{balance < 0 ? `${Math.abs(balance)} ر.س` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {reportType === "incomeStatement" && (
+        <div className="space-y-4">
+          <h4 className="font-display text-stone-800 text-xs font-bold">قائمة الدخل للفترة الحالية</h4>
+          <div className="space-y-3 font-body text-xs">
+            <div className="bg-emerald-50 text-emerald-950 p-3 rounded-lg flex justify-between font-bold">
+              <span>إيرادات المبيعات والخدمات</span>
+              <span>{accounts.filter(a => a.type === "revenue").reduce((s, acc) => s + Math.abs(getAccountFinancials(acc.id).balance), 0)} ر.س</span>
+            </div>
+            <div className="bg-stone-50 text-stone-950 p-3 rounded-lg flex justify-between font-bold">
+              <span>تكلفة النشاط والمشتريات</span>
+              <span>{accounts.filter(a => a.type === "expense" && a.code.startsWith("5001")).reduce((s, acc) => s + getAccountFinancials(acc.id).balance, 0)} ر.س</span>
+            </div>
+            <div className="bg-stone-50 text-stone-950 p-3 rounded-lg flex justify-between font-bold">
+              <span>المصروفات التشغيلية والعمومية (الرواتب والإهلاك والتشغيل)</span>
+              <span>{accounts.filter(a => a.type === "expense" && !a.code.startsWith("5001")).reduce((s, acc) => s + getAccountFinancials(acc.id).balance, 0)} ر.س</span>
+            </div>
+            <div className="border-t pt-4 flex justify-between text-sm font-semibold text-stone-900 px-3">
+              <span>صافي الأرباح / الخسائر الحالية</span>
+              <span>
+                {accounts.filter(a => a.type === "revenue").reduce((s, acc) => s + Math.abs(getAccountFinancials(acc.id).balance), 0) -
+                 accounts.filter(a => a.type === "expense").reduce((s, acc) => s + getAccountFinancials(acc.id).balance, 0)} ر.س
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsView({ data, setData }) {
+  function handleBackup() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `al_ameen_lite_backup_${todayStr()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }
+
+  function handleRestore(e) {
+    const fileReader = new FileReader();
+    fileReader.readAsText(e.target.files[0], "UTF-8");
+    fileReader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (parsed.accounts && parsed.entries) {
+          setData(parsed);
+          alert("تم استعادة النسخة الاحتياطية بنجاح بنسبة 100% ✓");
+        } else {
+          alert("الملف المرفوع لا يتوافق مع بنية بيانات الأمين ERP");
+        }
+      } catch (err) {
+        alert("فشل في استعادة البيانات، تأكد من سلامة الملف المرفوع.");
+      }
+    };
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6 space-y-6">
+      <div className="space-y-4">
+        <h4 className="font-display font-semibold text-stone-800 text-sm">تغيير لغة نظام ERP الموحد</h4>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setData((d) => ({ ...d, meta: { ...d.meta, language: "ar" } }))}
+            className={`text-xs px-4 py-2 rounded-lg font-body transition-all ${data.meta.language === "ar" ? "bg-stone-900 text-white font-semibold" : "bg-stone-100 hover:bg-stone-200"}`}
+          >
+            العربية (AR)
+          </button>
+          <button
+            onClick={() => setData((d) => ({ ...d, meta: { ...d.meta, language: "en" } }))}
+            className={`text-xs px-4 py-2 rounded-lg font-body transition-all ${data.meta.language === "en" ? "bg-stone-900 text-white font-semibold" : "bg-stone-100 hover:bg-stone-200"}`}
+          >
+            English (EN)
+          </button>
+        </div>
+      </div>
+
+      <div className="border-t pt-6 space-y-4">
+        <h4 className="font-display font-semibold text-stone-800 text-sm">النسخ الاحتياطي وتأمين قواعد البيانات</h4>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button onClick={handleBackup} className="bg-stone-900 hover:bg-stone-850 text-white text-xs px-4 py-2.5 rounded-lg font-body font-semibold">تصدير قاعدة البيانات (JSON)</button>
+          <div className="relative">
+            <input type="file" accept=".json" onChange={handleRestore} className="absolute inset-0 opacity-0 cursor-pointer w-full" />
+            <button className="bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs px-4 py-2.5 rounded-lg font-body font-semibold w-full">استيراد قاعدة بيانات محفوظة</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== Modals Forms ============================== */
+function AccountModal({ form, setForm, onSubmit, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">إضافة حساب جديد بالدليل</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">رمز الحساب (الباركود الرقمي)</label>
+            <input type="text" placeholder="مثال: 1003" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">اسم الحساب (ميزانية عمومية / أرباح وخسائر)</label>
+            <input type="text" placeholder="مثال: البنك المركزي" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">التبويب المحاسبي الرئيسي</label>
+            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none">
+              <option value="asset">أصول (Assets)</option>
+              <option value="liability">خصوم / التزامات (Liabilities)</option>
+              <option value="equity">حقوق ملكية (Equity)</option>
+              <option value="revenue">إيرادات (Revenues)</option>
+              <option value="expense">مصروفات (Expenses)</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">حفظ الحساب</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function EntryModal({ form, setForm, accounts, costCenters, onSubmit, onClose }) {
-  const updateLine = (idx, patch) => setForm({ ...form, lines: form.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) });
-  const addLine = () => setForm({ ...form, lines: [...form.lines, { accountId: "", debit: 0, credit: 0 }] });
-  const removeLine = (idx) => { if (form.lines.length <= 2) return; setForm({ ...form, lines: form.lines.filter((_, i) => i !== idx) }); };
-  const totalDebit = form.lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
-  const totalCredit = form.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
-  const balanced = totalDebit === totalCredit && totalDebit > 0;
+  function addLine() {
+    setForm({ ...form, lines: [...form.lines, { accountId: "", debit: 0, credit: 0 }] });
+  }
+
+  function removeLine(index) {
+    setForm({ ...form, lines: form.lines.filter((_, i) => i !== index) });
+  }
+
+  function updateLine(index, key, val) {
+    setForm({
+      ...form,
+      lines: form.lines.map((line, i) => (i === index ? { ...line, [key]: val } : line)),
+    });
+  }
+
   return (
-    <Modal title="قيد يومية جديد" onClose={onClose} wide>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="التاريخ"><input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label="البيان"><input className={inputCls} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="وصف القيد" /></Field>
-      </div>
-      <Field label="مركز التكلفة (اختياري)">
-        <select className={inputCls} value={form.costCenterId || ""} onChange={(e) => setForm({ ...form, costCenterId: e.target.value || null })}>
-          <option value="">بدون</option>
-          {costCenters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </Field>
-      <div className="space-y-2 mt-2">
-        {form.lines.map((line, idx) => (
-          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-            <select className={`${inputCls} col-span-5`} value={line.accountId} onChange={(e) => updateLine(idx, { accountId: e.target.value })}>
-              <option value="">اختر الحساب</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}
-            </select>
-            <input type="number" placeholder="مدين" className={`${inputCls} col-span-3 font-num`} value={line.debit || ""} onChange={(e) => updateLine(idx, { debit: Number(e.target.value) || 0, credit: 0 })} />
-            <input type="number" placeholder="دائن" className={`${inputCls} col-span-3 font-num`} value={line.credit || ""} onChange={(e) => updateLine(idx, { credit: Number(e.target.value) || 0, debit: 0 })} />
-            <button onClick={() => removeLine(idx)} className="col-span-1 text-stone-400 hover:text-red-600 flex justify-center"><Trash2 size={16} /></button>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4 my-8">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">إعداد وتدوين قيد يدوي مزدوج</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">تاريخ القيد</label>
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
           </div>
-        ))}
-      </div>
-      <button onClick={addLine} className="text-amber-700 text-xs font-body flex items-center gap-1 mt-2"><Plus size={14} /> إضافة سطر</button>
-      <div className="flex items-center justify-between mt-4 p-3 rounded-lg bg-stone-100 text-sm font-num">
-        <span>إجمالي المدين: {formatCurrency(totalDebit)}</span>
-        <span>إجمالي الدائن: {formatCurrency(totalCredit)}</span>
-        <span className={balanced ? "text-emerald-700 font-semibold" : "text-red-700 font-semibold"}>{balanced ? "متوازن ✓" : "غير متوازن"}</span>
-      </div>
-      <button disabled={!balanced} onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-body py-2.5 rounded-lg text-sm mt-4">ترحيل القيد</button>
-    </Modal>
-  );
-}
+          <div>
+            <label className="block text-stone-500 mb-1">بيان وشرح القيد</label>
+            <input type="text" placeholder="قيد رواتب / تسوية صندوق..." value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">ربط بمركز تكلفة مخصص (اختياري)</label>
+            <select value={form.costCenterId || ""} onChange={(e) => setForm({ ...form, costCenterId: e.target.value || null })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none">
+              <option value="">لا يوجد مركز تكلفة</option>
+              {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+            </select>
+          </div>
+        </div>
 
-/* ============================== Inventory ============================== */
+        <div className="space-y-2 pt-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-stone-800">أطراف القيد المزدوج</span>
+            <button onClick={addLine} className="text-xs text-stone-500 hover:text-stone-900 font-semibold underline">+ إضافة سطر</button>
+          </div>
 
-function InventoryView({ items, warehouses, onAdd, onEdit }) {
-  const { lang, t } = useLang();
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> صنف جديد</button>
-      </div>
-      <div className="bg-white border border-stone-200 rounded-xl overflow-x-auto">
-        <table className="w-full text-sm min-w-max">
-          <thead>
-            <tr className="text-stone-500 font-body text-xs border-b border-stone-100" style={{ backgroundColor: "#F5F0E4" }}>
-              <th className="text-right px-4 py-2.5 font-medium">الصنف</th>
-              <th className="text-right px-4 py-2.5 font-medium">الباركود</th>
-              <th className="text-right px-4 py-2.5 font-medium">الوحدة</th>
-              {warehouses.map((w) => <th key={w.id} className="text-right px-4 py-2.5 font-medium">{w.name}</th>)}
-              <th className="text-right px-4 py-2.5 font-medium">الإجمالي</th>
-              <th className="text-right px-4 py-2.5 font-medium">تكلفة الوحدة</th>
-              <th className="text-right px-4 py-2.5 font-medium">سعر البيع</th>
-              <th className="px-4 py-2.5"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((i) => {
-              const totalQty = Object.values(i.stock || {}).reduce((s, q) => s + Number(q), 0);
-              const low = totalQty <= 5;
-              return (
-                <tr key={i.id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50">
-                  <td className="px-4 py-2.5 font-body text-stone-800">{i.name}</td>
-                  <td className="px-4 py-2.5 font-num text-xs text-stone-500">{(i.barcodes || []).join(", ") || "—"}</td>
-                  <td className="px-4 py-2.5 font-body text-stone-500">{i.unit}</td>
-                  {warehouses.map((w) => <td key={w.id} className="px-4 py-2.5 font-num text-stone-600">{(i.stock && i.stock[w.id]) || 0}</td>)}
-                  <td className={`px-4 py-2.5 font-num font-semibold ${low ? "text-red-700" : "text-stone-800"}`}>{totalQty} {low && <AlertTriangle size={12} className="inline mb-0.5" />}</td>
-                  <td className="px-4 py-2.5 font-num text-stone-600">{formatCurrency(i.cost, lang)}</td>
-                  <td className="px-4 py-2.5 font-num text-stone-600">{formatCurrency(i.price, lang)}</td>
-                  <td className="px-4 py-2.5"><button onClick={() => onEdit(i)} className="text-xs text-amber-700 font-body hover:underline">تعديل</button></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {items.length === 0 && <p className="text-sm text-stone-500 font-body p-4">لا توجد أصناف بعد.</p>}
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {form.lines.map((l, index) => (
+              <div key={index} className="flex gap-2 items-center">
+                <select value={l.accountId} onChange={(e) => updateLine(index, "accountId", e.target.value)} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 flex-1 focus:outline-none">
+                  <option value="">اختر الحساب...</option>
+                  {accounts.map((acc) => <option key={acc.id} value={acc.id}>{acc.name} ({acc.code})</option>)}
+                </select>
+                <input type="number" placeholder="مدين" value={l.debit || ""} onChange={(e) => updateLine(index, "debit", Number(e.target.value))} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 w-20 focus:outline-none" />
+                <input type="number" placeholder="دائن" value={l.credit || ""} onChange={(e) => updateLine(index, "credit", Number(e.target.value))} className="bg-stone-50 border border-stone-200 text-xs rounded p-2 w-20 focus:outline-none" />
+                <button onClick={() => removeLine(index)} className="text-rose-600 hover:text-rose-800 font-semibold text-xs px-2">X</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">ترحيل وحفظ القيد</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
       </div>
     </div>
   );
 }
 
 function ItemModal({ form, setForm, warehouses, onSubmit, onClose, editing }) {
-  const setStock = (wId, val) => setForm({ ...form, stock: { ...form.stock, [wId]: Number(val) || 0 } });
   return (
-    <Modal title={editing ? "تعديل الصنف" : "صنف جديد"} onClose={onClose}>
-      <Field label="اسم الصنف"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="وحدة القياس"><input className={inputCls} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="قطعة، كرتون..." /></Field>
-        <Field label="الباركود (مفصول بفاصلة)"><input className={inputCls} value={(form.barcodes || []).join(", ")} onChange={(e) => setForm({ ...form, barcodes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} /></Field>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="تكلفة الوحدة"><input type="number" className={`${inputCls} font-num`} value={form.cost} onChange={(e) => setForm({ ...form, cost: Number(e.target.value) })} /></Field>
-        <Field label="سعر البيع"><input type="number" className={`${inputCls} font-num`} value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} /></Field>
-      </div>
-      <div className="border-t border-stone-200 pt-3 mt-2">
-        <span className="block text-xs font-body text-stone-600 mb-2">الكمية حسب المستودع</span>
-        <div className="grid grid-cols-2 gap-2">
-          {warehouses.map((w) => (
-            <Field key={w.id} label={w.name}><input type="number" className={`${inputCls} font-num`} value={(form.stock && form.stock[w.id]) || 0} onChange={(e) => setStock(w.id, e.target.value)} /></Field>
-          ))}
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">{editing ? "تعديل الصنف الحالي" : "إضافة صنف تجاري جديد"}</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">اسم الصنف</label>
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-stone-500 mb-1">سعر التكلفة</label>
+              <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-stone-500 mb-1">سعر البيع الافتراضي</label>
+              <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+            </div>
+          </div>
         </div>
-      </div>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-2">حفظ الصنف</button>
-    </Modal>
-  );
-}
-
-/* ============================== Invoices ============================== */
-
-function InvoicesView({ invoices, branches, onAdd }) {
-  const { lang, t } = useLang();
-  const branchName = (id) => branches.find((b) => b.id === id)?.name || "—";
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> فاتورة جديدة</button>
-      </div>
-      <div className="bg-white border border-stone-200 rounded-xl overflow-x-auto">
-        <table className="w-full text-sm min-w-max">
-          <thead>
-            <tr className="text-stone-500 font-body text-xs border-b border-stone-100" style={{ backgroundColor: "#F5F0E4" }}>
-              <th className="text-right px-4 py-2.5 font-medium">رقم</th><th className="text-right px-4 py-2.5 font-medium">النوع</th>
-              <th className="text-right px-4 py-2.5 font-medium">الطرف</th><th className="text-right px-4 py-2.5 font-medium">الفرع</th>
-              <th className="text-right px-4 py-2.5 font-medium">التاريخ</th><th className="text-right px-4 py-2.5 font-medium">الدفع</th>
-              <th className="text-right px-4 py-2.5 font-medium">الإجمالي</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...invoices].reverse().map((inv) => (
-              <tr key={inv.id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50">
-                <td className="px-4 py-2.5 font-num text-stone-500">#{inv.no}</td>
-                <td className="px-4 py-2.5"><span className={`text-xs font-body px-2 py-0.5 rounded-full ${inv.type === "sale" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{inv.type === "sale" ? "مبيعات" : "مشتريات"}</span></td>
-                <td className="px-4 py-2.5 font-body text-stone-800">{inv.partyName}</td>
-                <td className="px-4 py-2.5 font-body text-stone-500">{branchName(inv.branchId)}</td>
-                <td className="px-4 py-2.5 font-num text-stone-500">{inv.date}</td>
-                <td className="px-4 py-2.5 font-body text-stone-500">{inv.paymentMethod === "cash" ? "نقداً" : "آجل"}</td>
-                <td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(inv.total, lang)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {invoices.length === 0 && <p className="text-sm text-stone-500 font-body p-4">لا توجد فواتير بعد.</p>}
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">{editing ? "حفظ التعديلات" : "إضافة الصنف"}</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
       </div>
     </div>
   );
 }
 
 function InvoiceModal({ form, setForm, items, warehouses, customers, costCenters, branches, onSubmit, onClose }) {
-  const partyOptions = customers.filter((c) => c.type === (form.type === "sale" ? "customer" : "supplier"));
-  const updateLine = (idx, patch) => {
-    const lines = form.lines.map((l, i) => {
-      if (i !== idx) return l;
-      const merged = { ...l, ...patch };
-      if (patch.itemId) {
-        const item = items.find((it) => it.id === patch.itemId);
-        merged.price = item ? (form.type === "sale" ? item.price : item.cost) : 0;
-      }
-      return merged;
+  function addLine() {
+    setForm({ ...form, lines: [...form.lines, { itemId: "", warehouseId: warehouses[0]?.id || "", qty: 1, price: 0 }] });
+  }
+
+  function removeLine(index) {
+    setForm({ ...form, lines: form.lines.filter((_, i) => i !== index) });
+  }
+
+  function updateLine(index, key, val) {
+    setForm({
+      ...form,
+      lines: form.lines.map((line, i) => {
+        if (i !== index) return line;
+        const next = { ...line, [key]: val };
+        if (key === "itemId") {
+          const matchedItem = items.find((it) => it.id === val);
+          next.price = form.type === "sale" ? matchedItem?.price || 0 : matchedItem?.cost || 0;
+        }
+        return next;
+      }),
     });
-    setForm({ ...form, lines });
-  };
-  const addLine = () => setForm({ ...form, lines: [...form.lines, { itemId: "", warehouseId: warehouses[0]?.id || "", qty: 1, price: 0 }] });
-  const removeLine = (idx) => { if (form.lines.length <= 1) return; setForm({ ...form, lines: form.lines.filter((_, i) => i !== idx) }); };
-  const total = form.lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  }
 
   return (
-    <Modal title="فاتورة جديدة" onClose={onClose} wide>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="نوع الفاتورة">
-          <select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, customerId: "", newPartyName: "" })}>
-            <option value="sale">فاتورة مبيعات</option><option value="purchase">فاتورة مشتريات</option>
-          </select>
-        </Field>
-        <Field label="طريقة الدفع">
-          <select className={inputCls} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}>
-            <option value="cash">نقداً</option><option value="credit">آجل</option>
-          </select>
-        </Field>
-        <Field label={form.type === "sale" ? "العميل" : "المورد"}>
-          <select className={inputCls} value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })}>
-            <option value="">اختر من الدليل</option>
-            {partyOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            <option value="__new__">+ جهة جديدة</option>
-          </select>
-        </Field>
-        {form.customerId === "__new__" ? (
-          <Field label="اسم الجهة الجديدة"><input className={inputCls} value={form.newPartyName} onChange={(e) => setForm({ ...form, newPartyName: e.target.value })} /></Field>
-        ) : (
-          <Field label="الفرع">
-            <select className={inputCls} value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })}>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full p-6 space-y-4 my-8">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">تحرير وتعميد فاتورة</h3>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-body">
+          <div>
+            <label className="block text-stone-400 mb-1">نوع الفاتورة</label>
+            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none">
+              <option value="sale">فاتورة مبيعات</option>
+              <option value="purchase">فاتورة مشتريات</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-stone-400 mb-1">طريقة الدفع</label>
+            <select value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none">
+              <option value="cash">نقدي (كاش)</option>
+              <option value="credit">آجل (ذمم)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-stone-400 mb-1">الفرع المسؤول</label>
+            <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none">
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
-          </Field>
-        )}
-        <Field label="التاريخ"><input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-        <Field label="مركز التكلفة (اختياري)">
-          <select className={inputCls} value={form.costCenterId || ""} onChange={(e) => setForm({ ...form, costCenterId: e.target.value || null })}>
-            <option value="">بدون</option>
-            {costCenters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Field>
-      </div>
-
-      <div className="space-y-2 mt-2">
-        {form.lines.map((line, idx) => (
-          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-            <select className={`${inputCls} col-span-4`} value={line.itemId} onChange={(e) => updateLine(idx, { itemId: e.target.value })}>
-              <option value="">اختر الصنف</option>
-              {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-            </select>
-            <select className={`${inputCls} col-span-3`} value={line.warehouseId} onChange={(e) => updateLine(idx, { warehouseId: e.target.value })}>
-              {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-            <input type="number" placeholder="الكمية" className={`${inputCls} col-span-1 font-num`} value={line.qty} onChange={(e) => updateLine(idx, { qty: Number(e.target.value) })} />
-            <input type="number" placeholder="السعر" className={`${inputCls} col-span-2 font-num`} value={line.price} onChange={(e) => updateLine(idx, { price: Number(e.target.value) })} />
-            <span className="col-span-1 font-num text-xs text-stone-500 text-center">{formatCurrency((Number(line.qty) || 0) * (Number(line.price) || 0))}</span>
-            <button onClick={() => removeLine(idx)} className="col-span-1 text-stone-400 hover:text-red-600 flex justify-center"><Trash2 size={16} /></button>
           </div>
-        ))}
-      </div>
-      <button onClick={addLine} className="text-amber-700 text-xs font-body flex items-center gap-1 mt-2"><Plus size={14} /> إضافة صنف</button>
-
-      <div className="flex items-center justify-between mt-4 p-3 rounded-lg bg-stone-100 text-sm font-num font-semibold">
-        <span className="font-body font-normal text-stone-600">الإجمالي</span><span className="text-stone-900">{formatCurrency(total)}</span>
-      </div>
-      <p className="text-xs text-stone-400 font-body mt-2">سيتم توليد القيد المحاسبي وتحديث كميات المخزون بالمستودع المحدد لكل سطر تلقائياً.</p>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-3">حفظ الفاتورة وترحيل القيد</button>
-    </Modal>
-  );
-}
-
-/* ============================== POS ============================== */
-
-function POSView({ items, warehouses, onCheckout }) {
-  const { lang } = useLang();
-  const [cart, setCart] = useState({});
-  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || "");
-  const [search, setSearch] = useState("");
-
-  const filtered = items.filter((i) => i.name.includes(search) || (i.barcodes || []).some((b) => b.includes(search)));
-  const addToCart = (item) => setCart((c) => ({ ...c, [item.id]: (c[item.id] || 0) + 1 }));
-  const removeFromCart = (item) => setCart((c) => {
-    const next = { ...c };
-    if (next[item.id] > 1) next[item.id] -= 1; else delete next[item.id];
-    return next;
-  });
-  const cartLines = Object.entries(cart).map(([itemId, qty]) => {
-    const item = items.find((i) => i.id === itemId);
-    return { itemId, qty, price: item.price, name: item.name };
-  });
-  const total = cartLines.reduce((s, l) => s + l.qty * l.price, 0);
-
-  return (
-    <div className="grid md:grid-cols-3 gap-4">
-      <div className="md:col-span-2 space-y-3">
-        <div className="relative">
-          <Search size={16} className="absolute top-2.5 right-3 text-stone-400" />
-          <input className={`${inputCls} pr-9`} placeholder="ابحث بالاسم أو الباركود..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div>
+            <label className="block text-stone-400 mb-1">تاريخ اليوم</label>
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none" />
+          </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {filtered.map((item) => {
-            const stockQty = Object.values(item.stock || {}).reduce((s, q) => s + Number(q), 0);
-            return (
-              <button key={item.id} onClick={() => addToCart(item)} disabled={stockQty <= 0} className="bg-white border border-stone-200 rounded-xl p-3 text-right hover:border-amber-500 disabled:opacity-40 disabled:cursor-not-allowed">
-                <div className="font-body text-sm text-stone-800 mb-1">{item.name}</div>
-                <div className="font-num text-amber-700 font-semibold">{formatCurrency(item.price, lang)}</div>
-                <div className="font-num text-xs text-stone-400">متوفر: {stockQty}</div>
-              </button>
-            );
-          })}
+
+        <div className="grid grid-cols-2 gap-3 text-[11px] font-body">
+          <div>
+            <label className="block text-stone-400 mb-1">العميل / المورد</label>
+            <select value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none">
+              <option value="">زبون مبيعات مباشر (نقدي)</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="__new__">+ إضافة عميل/مورد جديد</option>
+            </select>
+          </div>
+          {form.customerId === "__new__" && (
+            <div>
+              <label className="block text-stone-400 mb-1">اسم الطرف الثاني الجديد</label>
+              <input type="text" placeholder="اسم العميل أو المورد الجديد" value={form.newPartyName} onChange={(e) => setForm({ ...form, newPartyName: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-1.5 focus:outline-none" />
+            </div>
+          )}
         </div>
-      </div>
-      <div className="bg-white border border-stone-200 rounded-xl p-4 h-fit sticky top-4">
-        <h3 className="font-display text-base text-stone-900 mb-3">السلة</h3>
-        <Field label="المستودع"><select className={inputCls} value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
-        <ul className="space-y-2 mb-3">
-          {cartLines.map((l) => (
-            <li key={l.itemId} className="flex items-center justify-between text-sm">
-              <span className="font-body text-stone-700 truncate">{l.name}</span>
-              <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => removeFromCart({ id: l.itemId })} className="w-6 h-6 rounded-full bg-stone-100 text-stone-600">−</button>
-                <span className="font-num w-5 text-center">{l.qty}</span>
-                <button onClick={() => addToCart({ id: l.itemId })} className="w-6 h-6 rounded-full bg-stone-100 text-stone-600">+</button>
+
+        <div className="space-y-2 pt-4">
+          <div className="flex items-center justify-between border-b pb-1">
+            <span className="text-xs font-bold text-stone-800">تفاصيل السطور والأصناف</span>
+            <button onClick={addLine} className="text-xs text-stone-500 hover:text-stone-900 font-semibold underline">+ إضافة صنف</button>
+          </div>
+
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {form.lines.map((l, index) => (
+              <div key={index} className="flex gap-2 items-center text-[11px]">
+                <select value={l.itemId} onChange={(e) => updateLine(index, "itemId", e.target.value)} className="bg-stone-50 border border-stone-200 rounded p-1.5 flex-1 focus:outline-none">
+                  <option value="">اختر الصنف...</option>
+                  {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                </select>
+                <select value={l.warehouseId} onChange={(e) => updateLine(index, "warehouseId", e.target.value)} className="bg-stone-50 border border-stone-200 rounded p-1.5 w-24 focus:outline-none">
+                  {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+                <input type="number" placeholder="الكمية" value={l.qty} onChange={(e) => updateLine(index, "qty", Number(e.target.value))} className="bg-stone-50 border border-stone-200 rounded p-1.5 w-16 focus:outline-none" />
+                <input type="number" placeholder="السعر" value={l.price || ""} onChange={(e) => updateLine(index, "price", Number(e.target.value))} className="bg-stone-50 border border-stone-200 rounded p-1.5 w-20 focus:outline-none" />
+                <button onClick={() => removeLine(index)} className="text-rose-600 hover:text-rose-800 font-bold px-1 text-xs">X</button>
               </div>
-            </li>
-          ))}
-          {cartLines.length === 0 && <p className="text-xs text-stone-400 font-body">السلة فارغة</p>}
-        </ul>
-        <div className="flex justify-between font-num font-semibold border-t border-stone-200 pt-2 mb-3"><span className="font-body font-normal">الإجمالي</span><span>{formatCurrency(total, lang)}</span></div>
-        <button
-          disabled={cartLines.length === 0}
-          onClick={() => { onCheckout(cartLines, warehouseId); setCart({}); }}
-          className="w-full bg-amber-700 hover:bg-amber-800 disabled:bg-stone-300 text-white font-body py-2.5 rounded-lg text-sm"
-        >
-          إتمام البيع نقداً
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ============================== Supply & Production ============================== */
-
-function SupplyProductionView({ purchaseOrders, productionOrders, customers, items, onAddPO, onAddProd, onRunProd }) {
-  const [tab, setTab] = useState("po");
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button onClick={() => setTab("po")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "po" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>أوامر الشراء</button>
-        <button onClick={() => setTab("prod")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "prod" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>أوامر التصنيع</button>
-      </div>
-      {tab === "po" && (
-        <div className="space-y-3">
-          <div className="flex justify-end"><button onClick={onAddPO} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> أمر شراء جديد</button></div>
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">رقم</th><th className="text-right px-4 py-2.5">المورد</th><th className="text-right px-4 py-2.5">التاريخ</th><th className="text-right px-4 py-2.5">عدد الأصناف</th><th className="text-right px-4 py-2.5">الحالة</th></tr></thead>
-              <tbody>
-                {[...purchaseOrders].reverse().map((po) => (
-                  <tr key={po.id} className="border-b border-stone-50 last:border-0">
-                    <td className="px-4 py-2.5 font-num text-stone-500">#{po.no}</td>
-                    <td className="px-4 py-2.5 font-body text-stone-800">{customers.find((c) => c.id === po.supplierId)?.name || "—"}</td>
-                    <td className="px-4 py-2.5 font-num text-stone-500">{po.date}</td>
-                    <td className="px-4 py-2.5 font-num text-stone-600">{po.lines.length}</td>
-                    <td className="px-4 py-2.5"><span className="text-xs font-body px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">مخطط له</span></td>
-                  </tr>
-                ))}
-                {purchaseOrders.length === 0 && <EmptyRow colSpan={5} text="لا توجد أوامر شراء بعد. هذه الوثائق للتخطيط فقط ولا تُنشئ قيوداً محاسبية حتى تتحول لفاتورة مشتريات فعلية." />}
-              </tbody>
-            </table>
+            ))}
           </div>
         </div>
-      )}
-      {tab === "prod" && (
-        <div className="space-y-3">
-          <div className="flex justify-end"><button onClick={onAddProd} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> أمر تصنيع جديد</button></div>
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">رقم</th><th className="text-right px-4 py-2.5">الصنف النهائي</th><th className="text-right px-4 py-2.5">الكمية</th><th className="text-right px-4 py-2.5">الحالة</th><th className="px-4 py-2.5"></th></tr></thead>
-              <tbody>
-                {[...productionOrders].reverse().map((po) => (
-                  <tr key={po.id} className="border-b border-stone-50 last:border-0">
-                    <td className="px-4 py-2.5 font-num text-stone-500">#{po.no}</td>
-                    <td className="px-4 py-2.5 font-body text-stone-800">{items.find((i) => i.id === po.finishedItemId)?.name || "—"}</td>
-                    <td className="px-4 py-2.5 font-num text-stone-600">{po.finishedQty}</td>
-                    <td className="px-4 py-2.5"><span className={`text-xs font-body px-2 py-0.5 rounded-full ${po.status === "done" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{po.status === "done" ? "منفّذ" : "قيد الانتظار"}</span></td>
-                    <td className="px-4 py-2.5">{po.status !== "done" && <button onClick={() => onRunProd(po)} className="text-xs text-amber-700 font-body hover:underline">تنفيذ</button>}</td>
-                  </tr>
-                ))}
-                {productionOrders.length === 0 && <EmptyRow colSpan={5} text="لا توجد أوامر تصنيع بعد." />}
-              </tbody>
-            </table>
-          </div>
+
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">ترحيل وحفظ الفاتورة وقيدها المزدوج</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
 function POModal({ form, setForm, customers, items, onSubmit, onClose }) {
-  const suppliers = customers.filter((c) => c.type === "supplier");
-  const updateLine = (idx, patch) => setForm({ ...form, lines: form.lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)) });
-  const addLine = () => setForm({ ...form, lines: [...form.lines, { itemId: "", qty: 1 }] });
+  function updateLine(index, key, val) {
+    setForm({
+      ...form,
+      lines: form.lines.map((l, i) => (i === index ? { ...l, [key]: val } : l)),
+    });
+  }
+
   return (
-    <Modal title="أمر شراء جديد" onClose={onClose}>
-      <Field label="المورد"><select className={inputCls} value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })}><option value="">اختر</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-      <Field label="التاريخ"><input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-      {form.lines.map((l, idx) => (
-        <div key={idx} className="grid grid-cols-12 gap-2 mb-2">
-          <select className={`${inputCls} col-span-8`} value={l.itemId} onChange={(e) => updateLine(idx, { itemId: e.target.value })}><option value="">اختر الصنف</option>{items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</select>
-          <input type="number" className={`${inputCls} col-span-4 font-num`} value={l.qty} onChange={(e) => updateLine(idx, { qty: Number(e.target.value) })} />
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100 font-bold">إنشاء أمر شراء</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">المورد المستهدف</label>
+            <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none">
+              <option value="">اختر مورد...</option>
+              {customers.filter((c) => c.type === "supplier").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <h4 className="font-bold text-stone-800 my-2">الصنف والكمية المطلوبة</h4>
+            {form.lines.map((l, i) => (
+              <div key={i} className="flex gap-2">
+                <select value={l.itemId} onChange={(e) => updateLine(i, "itemId", e.target.value)} className="bg-stone-50 border border-stone-200 rounded p-1.5 flex-1 text-xs">
+                  <option value="">اختر صنف...</option>
+                  {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                </select>
+                <input type="number" placeholder="الكمية" value={l.qty} onChange={(e) => updateLine(i, "qty", Number(e.target.value))} className="bg-stone-50 border border-stone-200 rounded p-1.5 w-20 text-xs text-center" />
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
-      <button onClick={addLine} className="text-amber-700 text-xs font-body flex items-center gap-1 mt-1 mb-3"><Plus size={14} /> إضافة صنف</button>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm">حفظ أمر الشراء</button>
-    </Modal>
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">حفظ أمر الشراء</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function ProdModal({ form, setForm, items, warehouses, onSubmit, onClose }) {
-  const updateComp = (idx, patch) => setForm({ ...form, components: form.components.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
-  const addComp = () => setForm({ ...form, components: [...form.components, { itemId: "", qty: 1 }] });
-  return (
-    <Modal title="أمر تصنيع جديد" onClose={onClose}>
-      <Field label="الصنف النهائي (المُجمَّع)"><select className={inputCls} value={form.finishedItemId} onChange={(e) => setForm({ ...form, finishedItemId: e.target.value })}><option value="">اختر</option>{items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</select></Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="الكمية المطلوب إنتاجها"><input type="number" className={`${inputCls} font-num`} value={form.finishedQty} onChange={(e) => setForm({ ...form, finishedQty: Number(e.target.value) })} /></Field>
-        <Field label="مستودع التنفيذ"><select className={inputCls} value={form.warehouseId} onChange={(e) => setForm({ ...form, warehouseId: e.target.value })}>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
-      </div>
-      <span className="block text-xs font-body text-stone-600 mb-2">المكوّنات المستهلكة</span>
-      {form.components.map((c, idx) => (
-        <div key={idx} className="grid grid-cols-12 gap-2 mb-2">
-          <select className={`${inputCls} col-span-8`} value={c.itemId} onChange={(e) => updateComp(idx, { itemId: e.target.value })}><option value="">اختر الصنف</option>{items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</select>
-          <input type="number" className={`${inputCls} col-span-4 font-num`} value={c.qty} onChange={(e) => updateComp(idx, { qty: Number(e.target.value) })} />
-        </div>
-      ))}
-      <button onClick={addComp} className="text-amber-700 text-xs font-body flex items-center gap-1 mt-1 mb-3"><Plus size={14} /> إضافة مكوّن</button>
-      <p className="text-xs text-stone-400 font-body mb-3">سيتم خصم المكوّنات من المستودع وإضافة الصنف النهائي بتكلفة مرجّحة، دون التأثير على القيود المحاسبية (تحويل داخلي للمخزون).</p>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm">حفظ أمر التصنيع</button>
-    </Modal>
-  );
-}
+  function updateComponent(index, key, val) {
+    setForm({
+      ...form,
+      components: form.components.map((c, i) => (i === index ? { ...c, [key]: val } : c)),
+    });
+  }
 
-/* ============================== CRM ============================== */
-
-function CRMView({ customers, invoices, onAdd }) {
-  const { lang } = useLang();
-  const [tab, setTab] = useState("customer");
-  const list = customers.filter((c) => c.type === tab);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          <button onClick={() => setTab("customer")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "customer" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>العملاء</button>
-          <button onClick={() => setTab("supplier")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "supplier" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>الموردون</button>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100 font-bold">بدء دورة تصنيع إنتاجية</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">المنتج النهائي المصنع</label>
+            <select value={form.finishedItemId} onChange={(e) => setForm({ ...form, finishedItemId: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs">
+              <option value="">اختر المنتج...</option>
+              {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-stone-500 mb-1">الكمية المستهدفة للإنتاج</label>
+              <input type="number" value={form.finishedQty} onChange={(e) => setForm({ ...form, finishedQty: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs" />
+            </div>
+            <div>
+              <label className="block text-stone-500 mb-1">المستودع المستلم</label>
+              <select value={form.warehouseId} onChange={(e) => setForm({ ...form, warehouseId: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs">
+                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <h4 className="font-bold text-stone-800 my-2">المواد الخام المستهلكة (BOM)</h4>
+            {form.components.map((c, i) => (
+              <div key={i} className="flex gap-2">
+                <select value={c.itemId} onChange={(e) => updateComponent(i, "itemId", e.target.value)} className="bg-stone-50 border border-stone-200 rounded p-1.5 flex-1 text-xs">
+                  <option value="">صنف خام...</option>
+                  {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                </select>
+                <input type="number" placeholder="الكمية" value={c.qty} onChange={(e) => updateComponent(i, "qty", Number(e.target.value))} className="bg-stone-50 border border-stone-200 rounded p-1.5 w-20 text-xs text-center" />
+              </div>
+            ))}
+          </div>
         </div>
-        <button onClick={() => onAdd(tab)} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 text-white text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> إضافة</button>
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">حفظ دورة التصنيع</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
       </div>
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">الاسم</th><th className="text-right px-4 py-2.5">الهاتف</th><th className="text-right px-4 py-2.5">عدد الفواتير</th><th className="text-right px-4 py-2.5">إجمالي التعامل</th></tr></thead>
-          <tbody>
-            {list.map((c) => {
-              const related = invoices.filter((i) => i.customerId === c.id);
-              const totalDeals = related.reduce((s, i) => s + i.total, 0);
-              return (
-                <tr key={c.id} className="border-b border-stone-50 last:border-0">
-                  <td className="px-4 py-2.5 font-body text-stone-800">{c.name}</td>
-                  <td className="px-4 py-2.5 font-num text-stone-500">{c.phone}</td>
-                  <td className="px-4 py-2.5 font-num text-stone-600">{related.length}</td>
-                  <td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(totalDeals, lang)}</td>
-                </tr>
-              );
-            })}
-            {list.length === 0 && <EmptyRow colSpan={4} text="لا توجد جهات بعد." />}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-stone-400 font-body">ملاحظة: هذا دليل جهات اتصال وحجم تعامل إجمالي، وليس كشف حساب فرعي مفصّل (يتطلب ربط كل سطر قيد بالعميل، وهو خارج نطاق هذا العرض التجريبي).</p>
     </div>
   );
 }
 
 function CRMModal({ form, setForm, onSubmit, onClose }) {
   return (
-    <Modal title="جهة اتصال جديدة" onClose={onClose}>
-      <Field label="الاسم"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <Field label="الهاتف"><input className={inputCls} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
-      <Field label="النوع"><select className={inputCls} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option value="customer">عميل</option><option value="supplier">مورد</option></select></Field>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-2">حفظ</button>
-    </Modal>
-  );
-}
-
-/* ============================== HR ============================== */
-
-function HRView({ employees, payrollRuns, onAdd, onRunPayroll }) {
-  const { lang } = useLang();
-  const totalSalaries = employees.reduce((s, e) => s + Number(e.salary), 0);
-  const alreadyRanThisMonth = payrollRuns.some((p) => p.month === monthKey());
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-white border border-stone-300 text-stone-700 text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> موظف جديد</button>
-        <button disabled={alreadyRanThisMonth} onClick={onRunPayroll} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 disabled:bg-stone-300 text-white text-sm font-body px-4 py-2 rounded-lg">تشغيل رواتب هذا الشهر</button>
-      </div>
-      {alreadyRanThisMonth && <p className="text-xs text-emerald-700 font-body">✓ تم تشغيل رواتب هذا الشهر مسبقاً.</p>}
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">الاسم</th><th className="text-right px-4 py-2.5">المسمى الوظيفي</th><th className="text-right px-4 py-2.5">الراتب الشهري</th></tr></thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{e.name}</td><td className="px-4 py-2.5 font-body text-stone-500">{e.position}</td><td className="px-4 py-2.5 font-num text-stone-900 font-semibold">{formatCurrency(e.salary, lang)}</td></tr>
-            ))}
-          </tbody>
-          <tfoot><tr className="border-t-2 border-stone-300"><td colSpan={2} className="px-4 py-3 font-body font-semibold text-stone-900">إجمالي الرواتب الشهرية</td><td className="px-4 py-3 font-num font-semibold text-stone-900">{formatCurrency(totalSalaries, lang)}</td></tr></tfoot>
-        </table>
-      </div>
-      {payrollRuns.length > 0 && (
-        <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-2.5 border-b" style={{ backgroundColor: "#F5F0E4" }}><h3 className="font-display text-sm text-stone-800">سجل تشغيل الرواتب</h3></div>
-          <table className="w-full text-sm">
-            <tbody>{[...payrollRuns].reverse().map((p) => <tr key={p.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-num text-stone-500">{p.month}</td><td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(p.total, lang)}</td></tr>)}</tbody>
-          </table>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100 font-bold">إضافة طرف تجاري (CRM)</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">الاسم التجاري الكامل</label>
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">رقم الجوال والتواصل</label>
+            <input type="text" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 text-xs" />
+          </div>
         </div>
-      )}
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">إضافة وحفظ</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function EmployeeModal({ form, setForm, onSubmit, onClose }) {
   return (
-    <Modal title="موظف جديد" onClose={onClose}>
-      <Field label="الاسم"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <Field label="المسمى الوظيفي"><input className={inputCls} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} /></Field>
-      <Field label="الراتب الشهري"><input type="number" className={`${inputCls} font-num`} value={form.salary} onChange={(e) => setForm({ ...form, salary: Number(e.target.value) })} /></Field>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-2">حفظ</button>
-    </Modal>
-  );
-}
-
-/* ============================== Fixed Assets ============================== */
-
-function FixedAssetsView({ fixedAssets, depreciationRuns, onAdd, onRunDepreciation }) {
-  const { lang } = useLang();
-  const alreadyRan = depreciationRuns.some((d) => d.month === monthKey());
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end gap-2">
-        <button onClick={onAdd} className="flex items-center gap-2 bg-white border border-stone-300 text-stone-700 text-sm font-body px-4 py-2 rounded-lg"><Plus size={16} /> أصل جديد</button>
-        <button disabled={alreadyRan} onClick={onRunDepreciation} className="flex items-center gap-2 bg-amber-700 hover:bg-amber-800 disabled:bg-stone-300 text-white text-sm font-body px-4 py-2 rounded-lg">احتساب إهلاك هذا الشهر</button>
-      </div>
-      {alreadyRan && <p className="text-xs text-emerald-700 font-body">✓ تم احتساب إهلاك هذا الشهر مسبقاً.</p>}
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">الأصل</th><th className="text-right px-4 py-2.5">التكلفة</th><th className="text-right px-4 py-2.5">العمر (شهر)</th><th className="text-right px-4 py-2.5">مجمع الإهلاك</th><th className="text-right px-4 py-2.5">الصافي الدفتري</th></tr></thead>
-          <tbody>
-            {fixedAssets.map((a) => (
-              <tr key={a.id} className="border-b border-stone-50 last:border-0">
-                <td className="px-4 py-2.5 font-body text-stone-800">{a.name}</td>
-                <td className="px-4 py-2.5 font-num text-stone-600">{formatCurrency(a.cost, lang)}</td>
-                <td className="px-4 py-2.5 font-num text-stone-600">{a.usefulLifeMonths}</td>
-                <td className="px-4 py-2.5 font-num text-red-700">{formatCurrency(a.accumulatedDepreciation, lang)}</td>
-                <td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(a.cost - a.accumulatedDepreciation, lang)}</td>
-              </tr>
-            ))}
-            {fixedAssets.length === 0 && <EmptyRow colSpan={5} text="لا توجد أصول ثابتة بعد." />}
-          </tbody>
-        </table>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">تسجيل موظف جديد بملف الموارد البشرية</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">الاسم الكامل للموظف</label>
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">المسمى والصفة الوظيفية</label>
+            <input type="text" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">الراتب الأساسي المعتمد شهرياً</label>
+            <input type="number" value={form.salary} onChange={(e) => setForm({ ...form, salary: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+        </div>
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">حفظ وحفظ الملف للموظف</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
+        </div>
       </div>
     </div>
   );
@@ -1147,447 +1367,657 @@ function FixedAssetsView({ fixedAssets, depreciationRuns, onAdd, onRunDepreciati
 
 function FixedAssetModal({ form, setForm, onSubmit, onClose }) {
   return (
-    <Modal title="أصل ثابت جديد" onClose={onClose}>
-      <Field label="اسم الأصل"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="التكلفة"><input type="number" className={`${inputCls} font-num`} value={form.cost} onChange={(e) => setForm({ ...form, cost: Number(e.target.value) })} /></Field>
-        <Field label="العمر الإنتاجي (بالأشهر)"><input type="number" className={`${inputCls} font-num`} value={form.usefulLifeMonths} onChange={(e) => setForm({ ...form, usefulLifeMonths: Number(e.target.value) })} /></Field>
-      </div>
-      <Field label="طريقة الدفع"><select className={inputCls} value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}><option value="cash">نقداً</option><option value="credit">آجل</option></select></Field>
-      <button onClick={onSubmit} className="w-full bg-amber-700 hover:bg-amber-800 text-white font-body py-2.5 rounded-lg text-sm mt-2">حفظ وترحيل قيد الشراء</button>
-    </Modal>
-  );
-}
-
-/* ============================== Org Settings (branches / warehouses / cost centers) ============================== */
-
-function OrgSettingsView({ branches, warehouses, costCenters, onAddBranch, onAddWarehouse, onAddCC }) {
-  const [tab, setTab] = useState("branches");
-  const [name, setName] = useState("");
-  const [city, setCity] = useState("");
-  function submit() {
-    if (!name.trim()) return;
-    if (tab === "branches") onAddBranch({ name, city });
-    if (tab === "warehouses") onAddWarehouse({ name });
-    if (tab === "cc") onAddCC({ name });
-    setName(""); setCity("");
-  }
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button onClick={() => setTab("branches")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "branches" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>الفروع</button>
-        <button onClick={() => setTab("warehouses")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "warehouses" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>المستودعات</button>
-        <button onClick={() => setTab("cc")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "cc" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>مراكز التكلفة</button>
-      </div>
-      <div className="bg-white border border-stone-200 rounded-xl p-4 flex gap-2 items-end">
-        <div className="flex-1"><Field label="الاسم"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field></div>
-        {tab === "branches" && <div className="flex-1"><Field label="المدينة"><input className={inputCls} value={city} onChange={(e) => setCity(e.target.value)} /></Field></div>}
-        <button onClick={submit} className="bg-amber-700 hover:bg-amber-800 text-white font-body px-4 py-2 rounded-lg text-sm mb-3">إضافة</button>
-      </div>
-      <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <tbody>
-            {tab === "branches" && branches.map((b) => <tr key={b.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{b.name}</td><td className="px-4 py-2.5 font-body text-stone-500">{b.city}</td></tr>)}
-            {tab === "warehouses" && warehouses.map((w) => <tr key={w.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{w.name}</td></tr>)}
-            {tab === "cc" && costCenters.map((c) => <tr key={c.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{c.name}</td></tr>)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ============================== Users & Roles ============================== */
-
-const PERMISSION_KEYS = ["dashboard", "accounts", "entries", "reports", "invoices", "pos", "inventory", "supplyProduction", "crm", "hr", "fixedAssets", "orgSettings", "usersRoles", "settings"];
-
-function UsersRolesView({ roles, users, onAddRole, onAddUser, onTogglePermission }) {
-  const [tab, setTab] = useState("users");
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button onClick={() => setTab("users")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "users" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>المستخدمون</button>
-        <button onClick={() => setTab("roles")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "roles" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>الأدوار والصلاحيات</button>
-      </div>
-      {tab === "users" && (
-        <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">المستخدم</th><th className="text-right px-4 py-2.5">الدور</th></tr></thead>
-            <tbody>{users.map((u) => <tr key={u.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{u.name}</td><td className="px-4 py-2.5 font-body text-stone-500">{roles.find((r) => r.id === u.roleId)?.name}</td></tr>)}</tbody>
-          </table>
-          <div className="p-3 border-t border-stone-100"><button onClick={onAddUser} className="text-xs text-amber-700 font-body flex items-center gap-1"><Plus size={14} /> مستخدم جديد</button></div>
-        </div>
-      )}
-      {tab === "roles" && (
-        <div className="space-y-4">
-          {roles.map((role) => (
-            <div key={role.id} className="bg-white border border-stone-200 rounded-xl p-4">
-              <h3 className="font-display text-sm text-stone-900 mb-3">{role.name}</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {PERMISSION_KEYS.map((k) => (
-                  <label key={k} className="flex items-center gap-2 text-xs font-body text-stone-600">
-                    <input type="checkbox" checked={role.permissions[k] !== false} onChange={() => onTogglePermission(role.id, k)} className="accent-amber-700" />
-                    {k}
-                  </label>
-                ))}
-              </div>
+    <div className="fixed inset-0 bg-stone-900/60 flex items-center justify-center p-4 z-50 animate-fade-in">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 className="font-display font-semibold text-stone-800 text-base border-b pb-3 border-stone-100">شراء وتسجيل أصل ثابت جديد</h3>
+        <div className="space-y-3 text-xs font-body">
+          <div>
+            <label className="block text-stone-500 mb-1">اسم الأصل المقتنى</label>
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-stone-500 mb-1">تكلفة الاقتناء الإجمالية</label>
+              <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
             </div>
-          ))}
-          <button onClick={onAddRole} className="text-xs text-amber-700 font-body flex items-center gap-1"><Plus size={14} /> دور جديد</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================== Reports ============================== */
-
-function ReportsView({ accounts, entries, costCenters }) {
-  const { lang } = useLang();
-  const [tab, setTab] = useState("trial");
-  const [ledgerAccId, setLedgerAccId] = useState(accounts[0]?.id || "");
-
-  const trialRows = accounts.map((a) => {
-    const raw = entries.flatMap((e) => e.lines).filter((l) => l.accountId === a.id).reduce((s, l) => s + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
-    return { account: a, debit: raw >= 0 ? raw : 0, credit: raw < 0 ? -raw : 0 };
-  });
-  const totalDebit = trialRows.reduce((s, r) => s + r.debit, 0);
-  const totalCredit = trialRows.reduce((s, r) => s + r.credit, 0);
-
-  const ledgerAcc = accounts.find((a) => a.id === ledgerAccId);
-  const ledgerRows = [];
-  if (ledgerAcc) {
-    let running = 0;
-    [...entries].sort((a, b) => (a.date > b.date ? 1 : -1)).forEach((e) => {
-      e.lines.forEach((l) => {
-        if (l.accountId !== ledgerAccId) return;
-        const normal = ledgerAcc.normalOverride || TYPE_META[ledgerAcc.type].normal;
-        const delta = normal === "debit" ? Number(l.debit || 0) - Number(l.credit || 0) : Number(l.credit || 0) - Number(l.debit || 0);
-        running += delta;
-        ledgerRows.push({ date: e.date, description: e.description, debit: l.debit, credit: l.credit, balance: running });
-      });
-    });
-  }
-
-  const ccRows = costCenters.map((cc) => {
-    const related = entries.filter((e) => e.costCenterId === cc.id);
-    const total = related.reduce((s, e) => s + e.lines.reduce((s2, l) => s2 + Number(l.debit || 0), 0), 0);
-    return { costCenter: cc, count: related.length, total };
-  });
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <button onClick={() => setTab("trial")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "trial" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>ميزان المراجعة</button>
-        <button onClick={() => setTab("ledger")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "ledger" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>كشف حساب</button>
-        <button onClick={() => setTab("cc")} className={`px-4 py-2 rounded-lg text-sm font-body ${tab === "cc" ? "bg-amber-700 text-white" : "bg-white border border-stone-200 text-stone-600"}`}>مراكز التكلفة</button>
-      </div>
-
-      {tab === "trial" && (
-        <div className="space-y-2">
-          <ExportBar rows={trialRows.filter((r) => r.debit || r.credit).map((r) => ({ الحساب: `${r.account.code} - ${r.account.name}`, مدين: r.debit, دائن: r.credit }))} filename="trial-balance" />
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">الحساب</th><th className="text-right px-4 py-2.5">مدين</th><th className="text-right px-4 py-2.5">دائن</th></tr></thead>
-              <tbody>
-                {trialRows.filter((r) => r.debit !== 0 || r.credit !== 0).map((r) => (
-                  <tr key={r.account.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{r.account.code} - {r.account.name}</td><td className="px-4 py-2.5 font-num text-stone-700">{r.debit ? formatCurrency(r.debit, lang) : "—"}</td><td className="px-4 py-2.5 font-num text-stone-700">{r.credit ? formatCurrency(r.credit, lang) : "—"}</td></tr>
-                ))}
-              </tbody>
-              <tfoot><tr className="border-t-2 border-stone-300 font-semibold"><td className="px-4 py-3 font-body text-stone-900">الإجمالي {totalDebit === totalCredit ? <span className="text-emerald-700">(متوازن ✓)</span> : <span className="text-red-700">(غير متوازن ⚠)</span>}</td><td className="px-4 py-3 font-num text-stone-900">{formatCurrency(totalDebit, lang)}</td><td className="px-4 py-3 font-num text-stone-900">{formatCurrency(totalCredit, lang)}</td></tr></tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {tab === "ledger" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <select className={inputCls} style={{ maxWidth: 320 }} value={ledgerAccId} onChange={(e) => setLedgerAccId(e.target.value)}>{accounts.map((a) => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}</select>
-            <ExportBar rows={ledgerRows.map((r) => ({ التاريخ: r.date, البيان: r.description, مدين: r.debit || 0, دائن: r.credit || 0, الرصيد: r.balance }))} filename="account-ledger" />
-          </div>
-          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">التاريخ</th><th className="text-right px-4 py-2.5">البيان</th><th className="text-right px-4 py-2.5">مدين</th><th className="text-right px-4 py-2.5">دائن</th><th className="text-right px-4 py-2.5">الرصيد</th></tr></thead>
-              <tbody>
-                {ledgerRows.map((r, idx) => <tr key={idx} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-num text-stone-500">{r.date}</td><td className="px-4 py-2.5 font-body text-stone-800">{r.description}</td><td className="px-4 py-2.5 font-num text-stone-700">{r.debit ? formatCurrency(r.debit, lang) : "—"}</td><td className="px-4 py-2.5 font-num text-stone-700">{r.credit ? formatCurrency(r.credit, lang) : "—"}</td><td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(r.balance, lang)}</td></tr>)}
-                {ledgerRows.length === 0 && <EmptyRow colSpan={5} text="لا توجد حركات على هذا الحساب." />}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {tab === "cc" && (
-        <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead><tr className="text-stone-500 font-body text-xs border-b" style={{ backgroundColor: "#F5F0E4" }}><th className="text-right px-4 py-2.5">مركز التكلفة</th><th className="text-right px-4 py-2.5">عدد القيود</th><th className="text-right px-4 py-2.5">إجمالي الحركة</th></tr></thead>
-            <tbody>{ccRows.map((r) => <tr key={r.costCenter.id} className="border-b border-stone-50 last:border-0"><td className="px-4 py-2.5 font-body text-stone-800">{r.costCenter.name}</td><td className="px-4 py-2.5 font-num text-stone-600">{r.count}</td><td className="px-4 py-2.5 font-num font-semibold text-stone-900">{formatCurrency(r.total, lang)}</td></tr>)}</tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================== Settings & Help ============================== */
-
-const HELP_TOPICS = [
-  { q: "كيف أضيف حساباً محاسبياً جديداً؟", a: "من شاشة شجرة الحسابات، اضغط زر إضافة، ثم أدخل رمزاً فريداً واسماً ونوع الحساب (أصول/خصوم/حقوق ملكية/إيرادات/مصروفات)." },
-  { q: "كيف أنشئ فاتورة وتُرحَّل تلقائياً؟", a: "من شاشة الفواتير اضغط فاتورة جديدة، اختر النوع والعميل/المورد والصنف والمستودع، وعند الحفظ يُنشأ القيد المحاسبي المرتبط ويُحدَّث المخزون تلقائياً." },
-  { q: "ما معنى ميزان المراجعة المتوازن؟", a: "يعني أن إجمالي كل المبالغ المدينة عبر كل الحسابات يساوي إجمالي كل المبالغ الدائنة، وهو ضمان أساسي لسلامة نظام القيد المزدوج." },
-  { q: "كيف تعمل الصلاحيات؟", a: "كل مستخدم مرتبط بدور، ولكل دور صلاحيات تحدد الشاشات التي يمكنه الوصول إليها. يمكن تعديل الصلاحيات من شاشة المستخدمون والصلاحيات." },
-  { q: "ما الفرق بين نسخ Desktop والأونلاين والبرو؟", a: "Desktop تناسب العمل بدون إنترنت على شبكة محلية، الأونلاين تعتمد على مزامنة سحابية مستمرة، والبرو نسخة مبسطة للشركات الصغيرة بواجهة أقل تعقيداً." },
-  { q: "كيف أُخرج مواد من أكثر من مستودع بفاتورة واحدة؟", a: "عند إضافة أسطر الفاتورة، اختر مستودعاً مختلفاً لكل سطر صنف حسب الحاجة." },
-];
-
-function SettingsView({ data, setData, allowedForEdition }) {
-  const { lang, t } = useLang();
-  const [openIdx, setOpenIdx] = useState(null);
-  return (
-    <div className="space-y-6">
-      <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-4">
-        <h3 className="font-display text-base text-stone-900">إعدادات عامة</h3>
-        <Field label="اسم المنشأة"><input className={inputCls} value={data.meta.companyName} onChange={(e) => setData((d) => ({ ...d, meta: { ...d.meta, companyName: e.target.value } }))} /></Field>
-        <Field label="اللغة / Language">
-          <div className="flex gap-2">
-            {["ar", "en"].map((l) => (
-              <button key={l} onClick={() => setData((d) => ({ ...d, meta: { ...d.meta, language: l } }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-body border ${data.meta.language === l ? "bg-amber-700 text-white border-amber-700" : "border-stone-300 text-stone-600"}`}>
-                <Globe size={14} /> {l === "ar" ? "العربية" : "English"}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="إصدار النظام">
-          <div className="flex flex-wrap gap-2">
-            {["desktop", "online", "pro"].map((ed) => (
-              <button key={ed} onClick={() => setData((d) => ({ ...d, meta: { ...d.meta, edition: ed, uiMode: ed === "pro" ? "simple" : d.meta.uiMode } }))} className={`px-3 py-1.5 rounded-lg text-sm font-body border ${data.meta.edition === ed ? "bg-amber-700 text-white border-amber-700" : "border-stone-300 text-stone-600"}`}>
-                {t(`edition_${ed}`)}
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="مستوى تعقيد الواجهة">
-          <div className="flex gap-2">
-            {["simple", "standard", "advanced"].map((m) => (
-              <button key={m} disabled={data.meta.edition === "pro"} onClick={() => setData((d) => ({ ...d, meta: { ...d.meta, uiMode: m } }))} className={`px-3 py-1.5 rounded-lg text-sm font-body border disabled:opacity-40 ${data.meta.uiMode === m ? "bg-amber-700 text-white border-amber-700" : "border-stone-300 text-stone-600"}`}>
-                {t(`mode_${m}`)}
-              </button>
-            ))}
-          </div>
-          {data.meta.edition === "pro" && <p className="text-xs text-stone-400 font-body mt-1">نسخة برو تعمل دائماً بالواجهة المبسطة.</p>}
-        </Field>
-      </div>
-
-      <div className="bg-white border border-stone-200 rounded-xl p-4">
-        <h3 className="font-display text-base text-stone-900 mb-3 flex items-center gap-2"><HelpCircle size={18} className="text-amber-700" /> دليل الاستخدام والمساعدة</h3>
-        <div className="space-y-2">
-          {HELP_TOPICS.map((topic, idx) => (
-            <div key={idx} className="border border-stone-200 rounded-lg overflow-hidden">
-              <button onClick={() => setOpenIdx(openIdx === idx ? null : idx)} className="w-full flex items-center justify-between px-3 py-2.5 text-right bg-stone-50 hover:bg-stone-100">
-                <span className="font-body text-sm text-stone-800">{topic.q}</span>
-                <ChevronDown size={16} className={`text-stone-400 transition-transform ${openIdx === idx ? "rotate-180" : ""}`} />
-              </button>
-              {openIdx === idx && <div className="px-3 py-2.5 text-sm font-body text-stone-600">{topic.a}</div>}
+            <div>
+              <label className="block text-stone-500 mb-1">العمر الإنتاجي (بالشهور)</label>
+              <input type="number" value={form.usefulLifeMonths} onChange={(e) => setForm({ ...form, usefulLifeMonths: Number(e.target.value) })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none" />
             </div>
-          ))}
+          </div>
+          <div>
+            <label className="block text-stone-500 mb-1">طريقة الدفع للشراء</label>
+            <select value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })} className="w-full bg-stone-50 border border-stone-200 rounded p-2 focus:outline-none">
+              <option value="cash">نقداً من صندوق الشركة</option>
+              <option value="credit">آجل بالذمة للمورد</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-4">
+          <button onClick={onSubmit} className="bg-stone-900 text-white px-4 py-2 rounded text-xs font-body font-semibold flex-1">ترحيل قيد الشراء وتسجيل الأصل</button>
+          <button onClick={onClose} className="bg-stone-100 text-stone-700 px-4 py-2 rounded text-xs font-body flex-1">إلغاء</button>
         </div>
       </div>
     </div>
   );
 }
 
-/* ============================== App ============================== */
-
+/* ============================== Core App Component ============================== */
 export default function App() {
-  const [data, setData] = useState(seedData());
-  const [loaded, setLoaded] = useState(false);
+  const [data, setData] = useState(() => {
+    const saved = localStorage.getItem("al_ameen_lite_erp_data");
+    return saved ? JSON.parse(saved) : INITIAL_DATA;
+  });
+
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [loaded, setLoaded] = useState(false);
   const [toast, setToast] = useState("");
 
+  // حالات فتح النوافذ المنبثقة للنماذج (Modals)
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accountForm, setAccountForm] = useState({ code: "", name: "", type: "asset" });
   const [showEntryModal, setShowEntryModal] = useState(false);
-  const [entryForm, setEntryForm] = useState({ date: todayStr(), description: "", costCenterId: null, lines: [{ accountId: "", debit: 0, credit: 0 }, { accountId: "", debit: 0, credit: 0 }] });
   const [showItemModal, setShowItemModal] = useState(false);
-  const [itemForm, setItemForm] = useState({ id: null, name: "", unit: "قطعة", barcodes: [], cost: 0, price: 0, stock: {} });
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [invoiceForm, setInvoiceForm] = useState({ type: "sale", paymentMethod: "cash", customerId: "", newPartyName: "", branchId: "b1", costCenterId: null, date: todayStr(), lines: [{ itemId: "", warehouseId: "w1", qty: 1, price: 0 }] });
   const [showPOModal, setShowPOModal] = useState(false);
-  const [poForm, setPoForm] = useState({ supplierId: "", date: todayStr(), lines: [{ itemId: "", qty: 1 }] });
   const [showProdModal, setShowProdModal] = useState(false);
-  const [prodForm, setProdForm] = useState({ finishedItemId: "", finishedQty: 1, warehouseId: "w1", components: [{ itemId: "", qty: 1 }] });
   const [showCRMModal, setShowCRMModal] = useState(false);
-  const [crmForm, setCrmForm] = useState({ name: "", phone: "", type: "customer" });
   const [showEmpModal, setShowEmpModal] = useState(false);
-  const [empForm, setEmpForm] = useState({ name: "", position: "", salary: 0 });
   const [showFAModal, setShowFAModal] = useState(false);
+
+  // حالات النماذج الفردية (Forms States)
+  const [accountForm, setAccountForm] = useState({ code: "", name: "", type: "asset" });
+  const [entryForm, setEntryForm] = useState({ date: todayStr(), description: "", costCenterId: null, lines: [{ accountId: "", debit: 0, credit: 0 }, { accountId: "", debit: 0, credit: 0 }] });
+  const [itemForm, setItemForm] = useState({ id: null, name: "", unit: "قطعة", barcodes: [], cost: 0, price: 0, stock: {} });
+  const [invoiceForm, setInvoiceForm] = useState({ type: "sale", paymentMethod: "cash", customerId: "", newPartyName: "", branchId: "b1", costCenterId: null, date: todayStr(), lines: [] });
+  const [poForm, setPoForm] = useState({ supplierId: "", date: todayStr(), lines: [{ itemId: "", qty: 1 }] });
+  const [prodForm, setProdForm] = useState({ finishedItemId: "", finishedQty: 1, warehouseId: "w1", components: [{ itemId: "", qty: 1 }] });
+  const [crmForm, setCrmForm] = useState({ name: "", phone: "", type: "customer" });
+  const [empForm, setEmpForm] = useState({ name: "", position: "", salary: 0 });
   const [faForm, setFaForm] = useState({ name: "", cost: 0, usefulLifeMonths: 36, paymentMethod: "cash" });
 
-  function showToast(msg) { setToast(msg); setTimeout(() => setToast(""), 2600); }
-
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY, false);
-        if (res && res.value) setData(JSON.parse(res.value));
-        else setData(seedData());
-      } catch (err) {
-        setData(seedData());
-      } finally {
-        setLoaded(true);
-      }
-    })();
-  }, []);
+    localStorage.setItem("al_ameen_lite_erp_data", JSON.stringify(data));
+    setLoaded(true);
+  }, [data]);
 
-  useEffect(() => {
-    if (!loaded) return;
-    (async () => {
-      try { await window.storage.set(STORAGE_KEY, JSON.stringify(data), false); } catch (err) { console.error("storage save failed", err); }
-    })();
-  }, [data, loaded]);
-
-  const getAccountBalance = useCallback((account) => {
-    let raw = 0;
-    data.entries.forEach((e) => e.lines.forEach((l) => { if (l.accountId === account.id) raw += (Number(l.debit) || 0) - (Number(l.credit) || 0); }));
-    const normal = account.normalOverride || TYPE_META[account.type].normal;
-    return normal === "debit" ? raw : -raw;
-  }, [data.entries]);
-  const getTypeTotal = useCallback((type) => data.accounts.filter((a) => a.type === type).reduce((s, a) => s + getAccountBalance(a), 0), [data.accounts, getAccountBalance]);
-  const findAcc = useCallback((code) => data.accounts.find((a) => a.code === code)?.id, [data.accounts]);
-
-  const currentUser = data.users.find((u) => u.id === data.meta.activeUserId);
-  const currentRole = data.roles.find((r) => r.id === currentUser?.roleId);
-  const allowedKeys = (MODE_KEYS[data.meta.uiMode] || MODE_KEYS.advanced).filter((k) => !currentRole || currentRole.permissions[k] !== false);
-
-  /* ---------- account / entry handlers ---------- */
-  function openAccountModal() { setAccountForm({ code: "", name: "", type: "asset" }); setShowAccountModal(true); }
-  function handleSaveAccount() {
-    if (!accountForm.code.trim() || !accountForm.name.trim()) return showToast("يرجى إدخال رمز واسم الحساب");
-    if (data.accounts.some((a) => a.code === accountForm.code.trim())) return showToast("رمز الحساب مستخدم مسبقاً");
-    setData((d) => ({ ...d, accounts: [...d.accounts, { ...accountForm, id: uid("acc") }] }));
-    setShowAccountModal(false); showToast("تمت إضافة الحساب ✓");
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 4000);
   }
-  function openEntryModal() { setEntryForm({ date: todayStr(), description: "", costCenterId: null, lines: [{ accountId: "", debit: 0, credit: 0 }, { accountId: "", debit: 0, credit: 0 }] }); setShowEntryModal(true); }
+
+  // التعرف على المستخدم الحالي وصلاحياته
+  const currentUser = data.users.find((u) => u.id === data.meta.activeUserId) || data.users[0];
+  const currentRole = data.roles.find((r) => r.id === currentUser?.roleId);
+
+  // تصفية التبويبات المسموحة للمستخدم حسب دوره في النظام
+  const allowedKeys = Object.keys(currentRole?.permissions || {}).filter(
+    (key) => currentRole?.permissions[key] === true
+  );
+
+  /* ---------- Financial Helpers ---------- */
+  function findAcc(code) {
+    return data.accounts.find((a) => a.code === code)?.id || null;
+  }
+
+  // حساب رصيد الحساب المالي من واقع قيود اليومية المزدوجة المرحلة والمثبتة
+  function getAccountBalance(accId) {
+    let bal = 0;
+    data.entries.forEach((entry) => {
+      if (!entry.posted) return;
+      entry.lines.forEach((l) => {
+        if (l.accountId === accId) {
+          bal += Number(l.debit || 0) - Number(l.credit || 0);
+        }
+      });
+    });
+    return bal;
+  }
+
+  // الحصول على إجمالي الفئات المالية (أصول، خصوم، إيرادات ومصروفات)
+  function getTypeTotal(type) {
+    return data.accounts
+      .filter((a) => a.type === type)
+      .reduce((sum, acc) => sum + Math.abs(getAccountBalance(acc.id)), 0);
+  }
+
+  /* ---------- Account Handlers ---------- */
+  function openAccountModal() {
+    setAccountForm({ code: "", name: "", type: "asset" });
+    setShowAccountModal(true);
+  }
+
+  function handleSaveAccount() {
+    if (!accountForm.code.trim() || !accountForm.name.trim()) return showToast("يرجى ملء كافة حقول الحساب");
+    if (data.accounts.some((a) => a.code === accountForm.code)) return showToast("رقم الحساب أو الكود مسجل مسبقاً بدليل الحسابات!");
+
+    const newAcc = { id: uid("a"), ...accountForm, parentId: null };
+    setData((d) => ({ ...d, accounts: [...d.accounts, newAcc] }));
+    setShowAccountModal(false);
+    showToast("تم إدراج الحساب المالي بنجاح ✓");
+  }
+
+  /* ---------- Journal Entry Handlers ---------- */
+  function openEntryModal() {
+    setEntryForm({
+      date: todayStr(),
+      description: "",
+      costCenterId: null,
+      lines: [
+        { accountId: "", debit: 0, credit: 0 },
+        { accountId: "", debit: 0, credit: 0 }
+      ]
+    });
+    setShowEntryModal(true);
+  }
+
   function handleSaveEntry() {
     const lines = entryForm.lines.filter((l) => l.accountId && (Number(l.debit) > 0 || Number(l.credit) > 0));
-    const totalDebit = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
-    const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
-    if (lines.length < 2 || totalDebit !== totalCredit || totalDebit === 0) return showToast("القيد غير متوازن، تحقق من المبالغ");
-    const newEntry = { id: uid("e"), no: data.entries.length + 1, date: entryForm.date, description: entryForm.description.trim() || "قيد يدوي", lines, posted: true, branchId: data.meta.activeBranchId, costCenterId: entryForm.costCenterId };
+    if (lines.length < 2) return showToast("القيد المحاسبي يجب أن يحتوي على طرفين على الأقل");
+
+    const totalDebit = lines.reduce((s, l) => s + Number(l.debit), 0);
+    const totalCredit = lines.reduce((s, l) => s + Number(l.credit), 0);
+
+    if (totalDebit !== totalCredit) return showToast(`القيد غير متوازن مالياً! الفرق: ${totalDebit - totalCredit}`);
+
+    const newEntry = {
+      id: uid("e"),
+      no: data.entries.length + 1,
+      date: entryForm.date,
+      description: entryForm.description || "قيد يدوي",
+      lines,
+      posted: true,
+      branchId: data.meta.activeBranchId,
+      costCenterId: entryForm.costCenterId,
+    };
     setData((d) => ({ ...d, entries: [...d.entries, newEntry] }));
-    setShowEntryModal(false); showToast("تم ترحيل القيد ✓");
+    setShowEntryModal(false);
+    showToast("تم ترحيل القيد بنجاح ✓");
   }
 
-  /* ---------- item handlers ---------- */
-  function openItemModal(item) { setItemForm(item ? { ...item } : { id: null, name: "", unit: "قطعة", barcodes: [], cost: 0, price: 0, stock: {} }); setShowItemModal(true); }
+  /* ---------- Inventory Handlers ---------- */
+  function openItemModal() {
+    setItemForm({ id: null, name: "", unit: "قطعة", barcodes: [], cost: 0, price: 0, stock: {} });
+    setShowItemModal(true);
+  }
+
+  function handleEditItem(item) {
+    setItemForm({ ...item });
+    setShowItemModal(true);
+  }
+
   function handleSaveItem() {
     if (!itemForm.name.trim()) return showToast("يرجى إدخال اسم الصنف");
-    if (itemForm.id) setData((d) => ({ ...d, items: d.items.map((i) => (i.id === itemForm.id ? { ...itemForm } : i)) }));
-    else setData((d) => ({ ...d, items: [...d.items, { ...itemForm, id: uid("item") }] }));
-    setShowItemModal(false); showToast("تم حفظ الصنف ✓");
+    if (itemForm.id) {
+      setData((d) => ({
+        ...d,
+        items: d.items.map((it) => (it.id === itemForm.id ? itemForm : it)),
+      }));
+      showToast("تم تعديل الصنف بنجاح ✓");
+    } else {
+      setData((d) => ({
+        ...d,
+        items: [...d.items, { ...itemForm, id: uid("item") }],
+      }));
+      showToast("تمت إضافة الصنف الجديد ✓");
+    }
+    setShowItemModal(false);
   }
 
-  /* ---------- invoice handler (core auto-posting logic) ---------- */
-  function openInvoiceModal() { setInvoiceForm({ type: "sale", paymentMethod: "cash", customerId: "", newPartyName: "", branchId: data.meta.activeBranchId, costCenterId: null, date: todayStr(), lines: [{ itemId: "", warehouseId: data.warehouses[0]?.id || "", qty: 1, price: 0 }] }); setShowInvoiceModal(true); }
-
-  function postSaleOrPurchase(type, lines, partyName, customerId, paymentMethod, branchId, costCenterId, date, isPOS) {
-    const validLines = lines.filter((l) => l.itemId && Number(l.qty) > 0);
-    if (validLines.length === 0) return null;
-    const total = validLines.reduce((s, l) => s + Number(l.qty) * Number(l.price), 0);
-
-    const newItems = data.items.map((item) => {
-      const line = validLines.find((l) => l.itemId === item.id);
-      if (!line) return item;
-      const qty = Number(line.qty);
-      const wId = line.warehouseId || data.warehouses[0]?.id;
-      if (type === "sale") {
-        return { ...item, stock: { ...item.stock, [wId]: (Number(item.stock?.[wId]) || 0) - qty } };
-      }
-      const oldQty = Number(item.stock?.[wId]) || 0;
-      const oldCost = Number(item.cost);
-      const newQty = oldQty + qty;
-      const newCost = newQty > 0 ? (oldQty * oldCost + qty * Number(line.price)) / newQty : Number(line.price);
-      return { ...item, cost: Math.round(newCost * 100) / 100, stock: { ...item.stock, [wId]: newQty } };
+  /* ---------- Invoices / POS Handlers ---------- */
+  function openInvoiceModal() {
+    setInvoiceForm({
+      type: "sale",
+      paymentMethod: "cash",
+      customerId: "",
+      newPartyName: "",
+      branchId: data.meta.activeBranchId || "b1",
+      costCenterId: null,
+      date: todayStr(),
+      lines: [{ itemId: "", warehouseId: data.warehouses[0]?.id || "w1", qty: 1, price: 0 }],
     });
-
-    const cashId = findAcc("1001"), arId = findAcc("1003"), invId = findAcc("1004"), apId = findAcc("2001"), salesId = findAcc("4001"), cogsId = findAcc("5001");
-    let entryLines = [];
-    if (type === "sale") {
-      const settleAcc = paymentMethod === "cash" ? cashId : arId;
-      entryLines.push({ accountId: settleAcc, debit: total, credit: 0 });
-      entryLines.push({ accountId: salesId, debit: 0, credit: total });
-      const totalCost = validLines.reduce((s, l) => { const item = data.items.find((i) => i.id === l.itemId); return s + Number(l.qty) * Number(item ? item.cost : 0); }, 0);
-      if (totalCost > 0) { entryLines.push({ accountId: cogsId, debit: totalCost, credit: 0 }); entryLines.push({ accountId: invId, debit: 0, credit: totalCost }); }
-    } else {
-      const settleAcc = paymentMethod === "cash" ? cashId : apId;
-      entryLines.push({ accountId: invId, debit: total, credit: 0 });
-      entryLines.push({ accountId: settleAcc, debit: 0, credit: total });
-    }
-
-    const invoiceNo = data.invoices.length + 1;
-    const newInvoice = { id: uid("inv"), no: invoiceNo, type, partyName, customerId: customerId || null, paymentMethod, branchId, costCenterId, date, lines: validLines, total };
-    const newEntry = { id: uid("e"), no: data.entries.length + 1, date, description: `قيد آلي - فاتورة ${type === "sale" ? "مبيعات" : "مشتريات"} رقم ${invoiceNo} (${partyName})${isPOS ? " - نقطة بيع" : ""}`, lines: entryLines, posted: true, branchId, costCenterId, invoiceId: newInvoice.id };
-
-    setData((d) => ({ ...d, items: newItems, invoices: [...d.invoices, newInvoice], entries: [...d.entries, newEntry] }));
-    return newInvoice;
+    setShowInvoiceModal(true);
   }
 
   function handleSaveInvoice() {
-    let partyName = "";
-    let customerId = invoiceForm.customerId;
-    if (customerId === "__new__") {
-      if (!invoiceForm.newPartyName.trim()) return showToast("يرجى إدخال اسم الجهة الجديدة");
-      partyName = invoiceForm.newPartyName.trim();
-      const newContact = { id: uid("c"), name: partyName, type: invoiceForm.type === "sale" ? "customer" : "supplier", phone: "" };
-      setData((d) => ({ ...d, customers: [...d.customers, newContact] }));
-      customerId = newContact.id;
-    } else {
-      const c = data.customers.find((x) => x.id === customerId);
-      if (!c) return showToast("يرجى اختيار العميل/المورد");
-      partyName = c.name;
+    const lines = invoiceForm.lines.filter((l) => l.itemId && Number(l.qty) > 0);
+    if (!lines.length) return showToast("الفاتورة فارغة أو تحتوي أسطر غير مكتملة");
+
+    let finalPartyName = "زبون نقدي";
+    let partyId = invoiceForm.customerId;
+
+    if (invoiceForm.customerId === "__new__") {
+      if (!invoiceForm.newPartyName.trim()) return showToast("يرجى إدخال اسم العميل/المورد الجديد");
+      const newId = uid("party");
+      partyId = newId;
+      finalPartyName = invoiceForm.newPartyName;
+      setData((d) => ({
+        ...d,
+        customers: [...d.customers, { id: newId, name: finalPartyName, type: invoiceForm.type === "sale" ? "customer" : "supplier", phone: "" }],
+      }));
+    } else if (invoiceForm.customerId) {
+      finalPartyName = data.customers.find((c) => c.id === invoiceForm.customerId)?.name || "—";
     }
-    const result = postSaleOrPurchase(invoiceForm.type, invoiceForm.lines, partyName, customerId, invoiceForm.paymentMethod, invoiceForm.branchId, invoiceForm.costCenterId, invoiceForm.date, false);
-    if (!result) return showToast("يرجى إكمال بيانات الفاتورة");
-    setShowInvoiceModal(false); showToast("تم حفظ الفاتورة وترحيل القيد تلقائياً ✓");
+
+    const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
+
+    // حساب تأثير المخزون وتحديث الكميات
+    const updatedItems = data.items.map((item) => {
+      const nextStock = { ...(item.stock || {}) };
+      lines.forEach((l) => {
+        if (l.itemId === item.id) {
+          const change = invoiceForm.type === "sale" ? -l.qty : l.qty;
+          nextStock[l.warehouseId] = (nextStock[l.warehouseId] || 0) + change;
+        }
+      });
+      return { ...item, stock: nextStock };
+    });
+
+    // توليد القيد المزدوج التلقائي
+    const isSale = invoiceForm.type === "sale";
+    const debitAccId = isSale
+      ? invoiceForm.paymentMethod === "cash"
+        ? findAcc("1001") // الصندوق
+        : findAcc("1003") // المدينون
+      : findAcc("1004"); // المخزون في المشتريات
+
+    const creditAccId = isSale
+      ? findAcc("4001") // إيرادات المبيعات
+      : invoiceForm.paymentMethod === "cash"
+      ? findAcc("1001") // الصندوق
+      : findAcc("2001"); // الدائنون
+
+    const journalLines = [
+      { accountId: debitAccId, debit: total, credit: 0 },
+      { accountId: creditAccId, debit: 0, credit: total },
+    ];
+
+    const newEntryNo = data.entries.length + 1;
+    const newEntry = {
+      id: uid("e"),
+      no: newEntryNo,
+      date: invoiceForm.date,
+      description: `فاتورة ${isSale ? "مبيعات" : "مشتريات"} رقم ${newEntryNo} - ${finalPartyName}`,
+      lines: journalLines,
+      posted: true,
+      branchId: invoiceForm.branchId,
+      costCenterId: invoiceForm.costCenterId,
+    };
+
+    const newInvoice = {
+      id: uid("inv"),
+      no: data.invoices.length + 1,
+      type: invoiceForm.type,
+      customerId: partyId,
+      partyName: finalPartyName,
+      branchId: invoiceForm.branchId,
+      costCenterId: invoiceForm.costCenterId,
+      date: invoiceForm.date,
+      paymentMethod: invoiceForm.paymentMethod,
+      lines,
+      total,
+    };
+
+    setData((d) => ({
+      ...d,
+      items: updatedItems,
+      entries: [...d.entries, newEntry],
+      invoices: [...d.invoices, newInvoice],
+    }));
+
+    setShowInvoiceModal(false);
+    showToast("تم حفظ الفاتورة وترحيل القيد وتحديث المخزون تلقائياً ✓");
   }
 
   function handlePOSCheckout(cartLines, warehouseId) {
-    const lines = cartLines.map((l) => ({ itemId: l.itemId, warehouseId, qty: l.qty, price: l.price }));
-    postSaleOrPurchase("sale", lines, "عميل نقدي", null, "cash", data.meta.activeBranchId, null, todayStr(), true);
-    showToast("تم إتمام عملية البيع ✓");
+    const total = cartLines.reduce((s, l) => s + l.qty * l.price, 0);
+    const date = todayStr();
+
+    const updatedItems = data.items.map((item) => {
+      const nextStock = { ...(item.stock || {}) };
+      cartLines.forEach((l) => {
+        if (l.itemId === item.id) {
+          nextStock[warehouseId] = (nextStock[warehouseId] || 0) - l.qty;
+        }
+      });
+      return { ...item, stock: nextStock };
+    });
+
+    const newEntryNo = data.entries.length + 1;
+    const journalLines = [
+      { accountId: findAcc("1001"), debit: total, credit: 0 }, // الصندوق
+      { accountId: findAcc("4001"), debit: 0, credit: total }, // المبيعات
+    ];
+
+    const newEntry = {
+      id: uid("e"),
+      no: newEntryNo,
+      date,
+      description: `فاتورة نقطة بيع (نقدي) رقم ${newEntryNo}`,
+      lines: journalLines,
+      posted: true,
+      branchId: data.meta.activeBranchId,
+      costCenterId: null,
+    };
+
+    const newInvoice = {
+      id: uid("inv"),
+      no: data.invoices.length + 1,
+      type: "sale",
+      customerId: "",
+      partyName: "زبون نقدي - POS",
+      branchId: data.meta.activeBranchId,
+      costCenterId: null,
+      date,
+      paymentMethod: "cash",
+      lines: cartLines.map((l) => ({ ...l, warehouseId })),
+      total,
+    };
+
+    setData((d) => ({
+      ...d,
+      items: updatedItems,
+      entries: [...d.entries, newEntry],
+      invoices: [...d.invoices, newInvoice],
+    }));
+    showToast("تمت عملية البيع بنجاح وترحيل القيد نقداً ✓");
   }
 
-/* ---------- purchase orders / production ---------- */
-function handleSavePO() {
-  const lines = poForm.lines.filter((l) => l.itemId && Number(l.qty) > 0);
-  if (!poForm.supplierId || lines.length === 0) {
-    return showToast("يرجى إكمال بيانات أمر الشراء");
+  /* ---------- Supply & Production Handlers ---------- */
+  function openPOModal() {
+    setPoForm({ supplierId: "", date: todayStr(), lines: [{ itemId: "", qty: 1 }] });
+    setShowPOModal(true);
   }
+
+  function handleSavePO() {
+    if (!poForm.supplierId) return showToast("يرجى اختيار المورد");
+    const validLines = poForm.lines.filter((l) => l.itemId && l.qty > 0);
+    if (!validLines.length) return showToast("أمر الشراء فارغ");
+    const newPO = {
+      id: uid("po"),
+      no: data.purchaseOrders.length + 1,
+      supplierId: poForm.supplierId,
+      date: poForm.date,
+      lines: validLines,
+    };
+    setData((d) => ({ ...d, purchaseOrders: [...d.purchaseOrders, newPO] }));
+    setShowPOModal(false);
+    showToast("تم حفظ أمر الشراء ✓");
+  }
+
+  function openProdModal() {
+    setProdForm({ finishedItemId: "", finishedQty: 1, warehouseId: "w1", components: [{ itemId: "", qty: 1 }] });
+    setShowProdModal(true);
+  }
+
+  function handleSaveProd() {
+    if (!prodForm.finishedItemId) return showToast("يرجى تحديد الصنف النهائي");
+    const validComponents = prodForm.components.filter((c) => c.itemId && c.qty > 0);
+    if (!validComponents.length) return showToast("يرجى إضافة مكونات مستهلكة");
+    const newProd = {
+      id: uid("pr"),
+      no: data.productionOrders.length + 1,
+      finishedItemId: prodForm.finishedItemId,
+      finishedQty: prodForm.finishedQty,
+      warehouseId: prodForm.warehouseId,
+      components: validComponents,
+      status: "pending",
+    };
+    setData((d) => ({ ...d, productionOrders: [...d.productionOrders, newProd] }));
+    setShowProdModal(false);
+    showToast("تم إنشاء أمر التصنيع بنجاح ✓");
+  }
+
+  function handleRunProd(po) {
+    // التحقق من كفاية المواد في المخزن قبل التشغيل
+    let canProcess = true;
+    const itemsPatch = data.items.map((item) => {
+      const nextStock = { ...(item.stock || {}) };
+      if (item.id === po.finishedItemId) {
+        nextStock[po.warehouseId] = (nextStock[po.warehouseId] || 0) + po.finishedQty;
+      }
+      po.components.forEach((comp) => {
+        if (comp.itemId === item.id) {
+          const currentStock = nextStock[po.warehouseId] || 0;
+          if (currentStock < comp.qty) {
+            canProcess = false;
+          } else {
+            nextStock[po.warehouseId] = currentStock - comp.qty;
+          }
+        }
+      });
+      return { ...item, stock: nextStock };
+    });
+
+    if (!canProcess) return showToast("فشل التنفيذ: الكمية المتوفرة من المكونات في المستودع غير كافية!");
+
+    setData((d) => ({
+      ...d,
+      items: itemsPatch,
+      productionOrders: d.productionOrders.map((p) => (p.id === po.id ? { ...p, status: "done" } : p)),
+    }));
+    showToast("تم تصنيع المنتج بنحو صحيح وتحديث مستويات المخزون ✓");
+  }
+
+  /* ---------- CRM / HR / Fixed Assets Handlers ---------- */
+  function openCRMModal(type) {
+    setCrmForm({ name: "", phone: "", type });
+    setShowCRMModal(true);
+  }
+
+  function handleSaveCRM() {
+    if (!crmForm.name.trim()) return showToast("يرجى ملء حقل الاسم");
+    setData((d) => ({ ...d, customers: [...d.customers, { ...crmForm, id: uid("crm") }] }));
+    setShowCRMModal(false);
+    showToast("تمت الإضافة بنجاح ✓");
+  }
+
+  function openEmpModal() {
+    setEmpForm({ name: "", position: "", salary: 0 });
+    setShowEmpModal(true);
+  }
+
+  function handleSaveEmployee() {
+    if (!empForm.name.trim() || empForm.salary <= 0) return showToast("يرجى ملء تفاصيل الموظف والراتب");
+    setData((d) => ({ ...d, employees: [...d.employees, { ...empForm, id: uid("emp") }] }));
+    setShowEmpModal(false);
+    showToast("تمت إضافة الموظف بنجاح ✓");
+  }
+
+  function handleRunPayroll() {
+    const month = monthKey();
+    if (data.payrollRuns.some((p) => p.month === month)) return showToast("تم تشغيل رواتب هذا الشهر مسبقاً");
+    const total = data.employees.reduce((s, e) => s + e.salary, 0);
+    if (total === 0) return showToast("لا يوجد موظفون مسجلون لتشغيل الرواتب");
+
+    // توليد القيد المحاسبي للرواتب تلقائياً
+    const newEntryNo = data.entries.length + 1;
+    const journalLines = [
+      { accountId: findAcc("5002"), debit: total, credit: 0 }, // مصروف رواتب (مصاريف تشغيلية)
+      { accountId: findAcc("1001"), debit: 0, credit: total }, // من الصندوق
+    ];
+
+    const newEntry = {
+      id: uid("e"),
+      no: newEntryNo,
+      date: todayStr(),
+      description: `قيد الرواتب والأجور لشهر ${month}`,
+      lines: journalLines,
+      posted: true,
+      branchId: data.meta.activeBranchId,
+      costCenterId: null,
+    };
+
+    setData((d) => ({
+      ...d,
+      payrollRuns: [...d.payrollRuns, { id: uid("pr"), month, total }],
+      entries: [...d.entries, newEntry],
+    }));
+    showToast(`تم تشغيل الرواتب بمبلغ ${total} ر.س وترحيل قيدها بنجاح ✓`);
+  }
+
+  function openFAModal() {
+    setFaForm({ name: "", cost: 0, usefulLifeMonths: 36, paymentMethod: "cash" });
+    setShowFAModal(true);
+  }
+
+  function handleSaveFixedAsset() {
+    if (!faForm.name.trim() || faForm.cost <= 0) return showToast("يرجى إدخال تفاصيل الأصل وتكلفته");
+    const newId = uid("fa");
+
+    // ترحيل قيد شراء الأصل
+    const debitAccId = findAcc("a5") || findAcc("1005"); // الأصول الثابتة
+    const creditAccId = faForm.paymentMethod === "cash" ? findAcc("1001") : findAcc("2001");
+    const newEntryNo = data.entries.length + 1;
+
+    const newEntry = {
+      id: uid("e"),
+      no: newEntryNo,
+      date: todayStr(),
+      description: `شراء أصل ثابت: ${faForm.name}`,
+      lines: [
+        { accountId: debitAccId, debit: faForm.cost, credit: 0 },
+        { accountId: creditAccId, debit: 0, credit: faForm.cost },
+      ],
+      posted: true,
+      branchId: data.meta.activeBranchId,
+      costCenterId: null,
+    };
+
+    setData((d) => ({
+      ...d,
+      fixedAssets: [...d.fixedAssets, { id: newId, name: faForm.name, cost: faForm.cost, usefulLifeMonths: faForm.usefulLifeMonths, purchaseDate: todayStr(), accumulatedDepreciation: 0 }],
+      entries: [...d.entries, newEntry],
+    }));
+
+    setShowFAModal(false);
+    showToast("تم حفظ الأصل الثابت الجديد وترحيل قيد الشراء ✓");
+  }
+
+  function handleRunDepreciation() {
+    const month = monthKey();
+    if (data.depreciationRuns.some((dr) => dr.month === month)) return showToast("تم احتساب الإهلاك لهذا الشهر مسبقاً");
+
+    let totalDepreciation = 0;
+    const nextAssets = data.fixedAssets.map((asset) => {
+      const monthlyDep = Math.round(asset.cost / asset.usefulLifeMonths);
+      const possibleAccDep = asset.accumulatedDepreciation + monthlyDep;
+      if (possibleAccDep <= asset.cost) {
+        totalDepreciation += monthlyDep;
+        return { ...asset, accumulatedDepreciation: possibleAccDep };
+      }
+      return asset;
+    });
+
+    if (totalDepreciation === 0) return showToast("لم يتبقَّ أصول تحتاج إلى إهلاك لهذا الشهر!");
+
+    const newEntryNo = data.entries.length + 1;
+    const newEntry = {
+      id: uid("e"),
+      no: newEntryNo,
+      date: todayStr(),
+      description: `قيد الإهلاك الشهري للأصول لشهر ${month}`,
+      lines: [
+        { accountId: findAcc("5004") || findAcc("5002"), debit: totalDepreciation, credit: 0 }, // مصروف الإهلاك
+        { accountId: findAcc("1006"), debit: 0, credit: totalDepreciation }, // مجمع الإهلاك
+      ],
+      posted: true,
+      branchId: data.meta.activeBranchId,
+      costCenterId: null,
+    };
+
+    setData((d) => ({
+      ...d,
+      fixedAssets: nextAssets,
+      depreciationRuns: [...d.depreciationRuns, { id: uid("dep"), month, total: totalDepreciation }],
+      entries: [...d.entries, newEntry],
+    }));
+    showToast(`تم تشغيل عملية الإهلاك بقيمة ${totalDepreciation} ر.س ✓`);
+  }
+
+  /* ---------- Org & Settings Handlers ---------- */
+  function handleAddBranch(b) { setData((d) => ({ ...d, branches: [...d.branches, { ...b, id: uid("b") }] })); showToast("تمت إضافة الفرع ✓"); }
+  function handleAddWarehouse(w) { setData((d) => ({ ...d, warehouses: [...d.warehouses, { ...w, id: uid("w") }] })); showToast("تمت إضافة المستودع ✓"); }
+  function handleAddCC(c) { setData((d) => ({ ...d, costCenters: [...d.costCenters, { ...c, id: uid("cc") }] })); showToast("تمت إضافة مركز التكلفة ✓"); }
   
-  const newPO = { 
-    id: uid("po"), 
-    no: data.purchaseOrders.length + 1, 
-    supplierId: poForm.supplierId, 
-    date: poForm.date, 
-    lines: lines, 
-    status: "open" 
-  };
+  function handleTogglePermission(roleId, permKey) {
+    setData((d) => ({
+      ...d,
+      roles: d.roles.map((r) => {
+        if (r.id !== roleId) return r;
+        return { ...r, permissions: { ...r.permissions, [permKey]: !r.permissions[permKey] } };
+      }),
+    }));
+  }
 
-  setData(prev => ({
-    ...prev,
-    purchaseOrders: [newPO, ...prev.purchaseOrders]
-  }));
+  /* ============================== Render Main Layout ============================== */
 
-  setPoForm({
-    supplierId: "",
-    date: todayStr(),
-    lines: [{ itemId: "", qty: "", cost: "" }]
-  });
+  if (!loaded) {
+    return (
+      <div className="min-h-screen bg-stone-50 flex items-center justify-center font-body text-stone-500">
+        جاري تحميل نظام الأمين لايت...
+      </div>
+    );
+  }
 
-  showToast("Success");
+  const translations = STR[data.meta.language] || STR.ar;
+  const t = (key) => translations[key] || key;
 
+  return (
+    <LangContext.Provider value={{ lang: data.meta.language, t }}>
+      <div className="min-h-screen bg-stone-50 flex flex-col md:flex-row" dir={data.meta.language === "ar" ? "rtl" : "ltr"}>
+        <Sidebar active={activeTab} setActive={setActiveTab} data={data} allowedKeys={allowedKeys} />
+        <TopNav active={activeTab} setActive={setActiveTab} allowedKeys={allowedKeys} />
+
+        <main className="flex-1 p-5 md:p-8 space-y-6 max-w-7xl mx-auto w-full">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-stone-200 pb-4 flex-wrap gap-3">
+            <div>
+              <h2 className="font-display text-2xl text-stone-900">{t(`title_${activeTab}`)}</h2>
+              <p className="text-xs text-stone-400 font-body">{t(`sub_${activeTab}`)}</p>
+            </div>
+            {/* User Session Info */}
+            <div className="flex items-center gap-2 bg-stone-100 px-3 py-1.5 rounded-lg text-xs font-body">
+              <span className="font-semibold text-stone-800">{currentUser?.name}</span>
+              <span className="text-stone-400">|</span>
+              <span className="text-stone-500">{currentRole?.name}</span>
+            </div>
+          </div>
+
+          {/* Core Views */}
+          {activeTab === "dashboard" && <DashboardView data={data} getAccountBalance={getAccountBalance} getTypeTotal={getTypeTotal} />}
+          {activeTab === "accounts" && <AccountsView accounts={data.accounts} getAccountBalance={getAccountBalance} onAdd={openAccountModal} />}
+          {activeTab === "entries" && <EntriesView entries={data.entries} accounts={data.accounts} costCenters={data.costCenters} onAdd={openEntryModal} />}
+          {activeTab === "inventory" && <InventoryView items={data.items} warehouses={data.warehouses} onAdd={openItemModal} onEdit={handleEditItem} />}
+          {activeTab === "invoices" && <InvoicesView invoices={data.invoices} branches={data.branches} onAdd={openInvoiceModal} />}
+          {activeTab === "pos" && <POSView items={data.items} warehouses={data.warehouses} onCheckout={handlePOSCheckout} />}
+          {activeTab === "supplyProduction" && <SupplyProductionView purchaseOrders={data.purchaseOrders} productionOrders={data.productionOrders} customers={data.customers} items={data.items} onAddPO={openPOModal} onAddProd={openProdModal} onRunProd={handleRunProd} />}
+          {activeTab === "crm" && <CRMView customers={data.customers} invoices={data.invoices} onAdd={openCRMModal} />}
+          {activeTab === "hr" && <HRView employees={data.employees} payrollRuns={data.payrollRuns} onAdd={openEmpModal} onRunPayroll={handleRunPayroll} />}
+          {activeTab === "fixedAssets" && <FixedAssetsView fixedAssets={data.fixedAssets} depreciationRuns={data.depreciationRuns} onAdd={openFAModal} onRunDepreciation={handleRunDepreciation} />}
+          {activeTab === "orgSettings" && <OrgSettingsView branches={data.branches} warehouses={data.warehouses} costCenters={data.costCenters} onAddBranch={handleAddBranch} onAddWarehouse={handleAddWarehouse} onAddCC={handleAddCC} />}
+          {activeTab === "usersRoles" && <UsersRolesView roles={data.roles} users={data.users} onAddRole={() => {}} onAddUser={() => {}} onTogglePermission={handleTogglePermission} />}
+          {activeTab === "reports" && <ReportsView accounts={data.accounts} entries={data.entries} costCenters={data.costCenters} />}
+          {activeTab === "settings" && <SettingsView data={data} setData={setData} />}
+        </main>
+
+        {/* --- Modals --- */}
+        {showAccountModal && <AccountModal form={accountForm} setForm={setAccountForm} onSubmit={handleSaveAccount} onClose={() => setShowAccountModal(false)} />}
+        {showEntryModal && <EntryModal form={entryForm} setForm={setEntryForm} accounts={data.accounts} costCenters={data.costCenters} onSubmit={handleSaveEntry} onClose={() => setShowEntryModal(false)} />}
+        {showItemModal && <ItemModal form={itemForm} setForm={setItemForm} warehouses={data.warehouses} onSubmit={handleSaveItem} onClose={() => setShowItemModal(false)} editing={!!itemForm.id} />}
+        {showInvoiceModal && <InvoiceModal form={invoiceForm} setForm={setInvoiceForm} items={data.items} warehouses={data.warehouses} customers={data.customers} costCenters={data.costCenters} branches={data.branches} onSubmit={handleSaveInvoice} onClose={() => setShowInvoiceModal(false)} />}
+        {showPOModal && <POModal form={poForm} setForm={setPoForm} customers={data.customers} items={data.items} onSubmit={handleSavePO} onClose={() => setShowPOModal(false)} />}
+        {showProdModal && <ProdModal form={prodForm} setForm={setProdForm} items={data.items} warehouses={data.warehouses} onSubmit={handleSaveProd} onClose={() => setShowProdModal(false)} />}
+        {showCRMModal && <CRMModal form={crmForm} setForm={setCrmForm} onSubmit={handleSaveCRM} onClose={() => setShowCRMModal(false)} />}
+        {showEmpModal && <EmployeeModal form={empForm} setForm={setEmpForm} onSubmit={handleSaveEmployee} onClose={() => setShowEmpModal(false)} />}
+        {showFAModal && <FixedAssetModal form={faForm} setForm={setFaForm} onSubmit={handleSaveFixedAsset} onClose={() => setShowFAModal(false)} />}
+
+        {/* --- Global Toast --- */}
+        {toast && (
+          <div className="fixed bottom-5 left-5 right-5 md:left-auto bg-stone-900 text-stone-100 text-sm font-body px-5 py-3.5 rounded-xl shadow-2xl z-50 flex items-center gap-3 border border-stone-700 animate-slide-up">
+            <span>{toast}</span>
+          </div>
+        )}
+      </div>
+    </LangContext.Provider>
+  );
 }
-
-export default App;
-
